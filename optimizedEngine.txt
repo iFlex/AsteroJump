@@ -1,0 +1,3614 @@
+--optimized engine
+-----------------------------------------------------------------------------------------
+--
+-- ENGINE.lua
+-- Object existance convention:
+-- 		A display object exists as far as the engine is concerned if isVisible = true and of course if it's present in the levelData
+--
+local storyboard = require( "storyboard" )
+local widget = require "widget"
+local fps = require("fpsmonitor")
+local showLoad = require("loadScreen")
+--local decor = require("DecorateBKG")
+require "system"
+system.activate( "multitouch" )
+-----------------------------------------------------------------------------------------
+local scene = storyboard.newScene()
+local group
+-- essential engine vars
+print("Game engine starts...")
+local TickCount = 0
+local levelData = nil;
+levelData = {}
+local instructions = {}
+local joints = {}
+local animations = {}
+local ROTATION_AMPLIFYER = 2
+local ZOOM_AMPLIFYER = 1
+local MAX_TURN_AND_ZOOM = 5
+---Player parementers
+local FullImpulse = 0.3
+local TelekinesisForce = 1000
+local TelekinesisRange = 10.0
+-----------------------
+local RemoveOnce = false
+local ZoomRecover = false
+local BlastNr = 0
+local ROTATION_PACE = 10 -- the higher the slowe it will rotate
+-----------------------------------------
+local maxY = -3000000000
+local minY = 3000000000
+local maxX = maxY
+local minX = minY
+local CameraX = 0;
+local CameraY = 0;
+local PlayerCamX = 0;
+local PlayerCamY = 0;
+local PLAYER_SIZE_COEFF = 0.2;
+-----------------------------------------
+local TapActionSelector = "jump" -- conjureExplosion or conjureImplosion
+nrStars  = 0
+nrFlames = 0
+nrVacums = 0
+nrGold = 0
+local ActionTrinketCost = 3
+local ActionMagnitude = 5.0
+-----------------------------------------
+--debug
+local DebugLabel = nil
+-- include Corona's "physics" library
+local physics = require "physics"
+-- setup the physics
+physics.start()
+physics.pause()
+physics.setGravity(0,0)
+--physics.setDrawMode("debug")
+--------------------------------------------
+-- forward declarations and other locals
+local background = display.newRect( 0,0, display.contentWidth*1.1, display.contentHeight*1.2)
+background:setFillColor(0,0,0)
+background.x = display.contentWidth  / 2
+background.y = display.contentHeight / 2
+background.alpha = BKG_ALPHA
+local cameraReady = false
+local reinstated = false
+local amZooming = false
+local amRotating = false
+-------------------------------------------------
+local GameFrozen = true
+local pauseBtn
+local Capturer = nil
+local GoTo = "menu"
+-----------------------------------------------------------------------------------------
+-- BEGINNING OF YOUR IMPLEMENTATION
+-- 
+-- NOTE: Code outside of listener functions (below) will only be executed once,
+--		unless storyboard.removeScene() is called.
+-- 
+-----------------------------------------------------------------------------------------
+-- MIKES ARROW CODE
+local arrow = display.newImageRect(SELECTED_SKIN_PACK..'arrow_tip.png',SKIN_BASE_DIR,50,50)
+local rect = display.newRect(0,0,15,15)
+arrow.x = 0
+arrow.y = 0
+local arrow_srs
+local arrow_len = 0
+arrow:setFillColor(0, 0, 255)
+arrow.isVisible = false
+rect:setFillColor(0, 0, 255)
+rect.isVisible = false
+local last_x = 0
+local last_y = 0
+function initialiseArrow(event)
+	arrow_srs = event.target
+	rect.isVisible = true
+	arrow.isVisible = true
+	
+	arrow:setFillColor(0, 0, 255)
+	arrow.x = arrow_srs.x
+	arrow.y = arrow_srs.y
+	
+	rect:setFillColor(0, 0, 255)
+	rect.x = arrow_srs.x
+	rect.y = arrow_srs.y
+	
+	last_x = arrow_srs.x
+	last_y = arrow_srs.y
+	rect:toFront()
+	arrow:toFront()
+end
+
+function endArrow(event)
+	AllowArrow = false
+	arrow.isVisible = false
+	rect.width = 0.001 -- not possible with 0
+	rect.isVisible = false
+	if(arrow_srs.x == nil) then
+		return 0
+	end
+	return arrow_len
+end
+
+function moveArrow(x,y)
+		if(arrow_srs.x == nil) then
+			endArrow(event)
+			return
+		end
+		rect.isVisible = true
+		arrow.isVisible = true
+	
+		local dis_x = - arrow_srs.x + x
+		local dis_y = - arrow_srs.y + y
+		arrow_len = math.sqrt(math.pow(dis_x,2) + math.pow(dis_y,2))
+		local angle = math.atan2(dis_y,dis_x)
+		
+		if arrow_len > 0 then
+			if (arrow_len > TelekinesisForce) then
+				arrow_len = TelekinesisForce
+			end
+			rect:setFillColor((255/TelekinesisForce) * (arrow_len), 0, (255/TelekinesisForce) * (TelekinesisForce - arrow_len))
+			rect.rotation = math.deg(angle)
+			rect.isVisivle = true
+			rect.width = arrow_len
+			rect.x = arrow_srs.x + arrow_len*math.cos(angle)/2
+			rect.y = arrow_srs.y + arrow_len*math.sin(angle)/2
+
+			arrow:setFillColor((255/TelekinesisForce) * (arrow_len), 0, (255/TelekinesisForce) * (TelekinesisForce - arrow_len))
+			arrow.rotation = math.deg(angle + (88.75 / (2*math.pi)))
+			arrow.isVisivle = true
+			arrow.x = arrow_srs.x + arrow_len*math.cos(angle)
+			arrow.y = arrow_srs.y + arrow_len*math.sin(angle)
+		end
+		last_x = x
+		last_y = y
+end
+-------------------------------------- END OF MIKE's ARROW CODE -------------------------------------------
+-------------------------------------- STAR AND TRINKET SELECTION CODE ------------------------------------
+local stars = {}
+local flame
+local flameScore
+local vacuum
+local vacuumScore
+local gold
+local goldScore
+local statusBar
+local selector
+local MAX_TAP_TOLERANCE = 5
+local RemoveOnce = false
+local TapNotValid = 0
+local zXanchor = 0
+local zYanchor = 0
+local tangle = 0
+local lastTarget = nil
+local touches = {}
+local firstDist = 0
+local lastAngle = nil;
+local angleDiff = 0
+local AllowArrow = false;
+function rotateCamera(da)
+	print("Rotating by:",math.deg(da))
+	local cx = display.contentWidth/2;
+	local cy = display.contentHeight/2;
+	for key,value in pairs(levelData) do
+		if( levelData[key]["image"] and levelData[key]["image"].isVisible and levelData[key]["image"].x ) then
+			local dx=levelData[key]["image"].x-cx
+			local dy=levelData[key]["image"].y-cy;
+			radius = math.sqrt((dx)^2+(dy)^2)
+			local cangle = math.atan2(dy,dx)+da
+			levelData[key]["image"].x = cx + radius*math.cos(cangle)
+			levelData[key]["image"].y = cy + radius*math.sin(cangle)
+			
+			local vx,vy;
+			if amZooming then
+				vx = levelData[key]["xvel"]
+				vy = levelData[key]["yvel"]
+			else
+				vx,vy = levelData[key]["image"]:getLinearVelocity() 
+				levelData[key]["image"]:setLinearVelocity(0,0,levelData[key]["image"].x,levelData[key]["image"].y)
+			end
+			if vx ~= 0 or vy ~= 0 then
+				cangle = math.atan2(vy,vx)
+				cangle = cangle + da
+				radius = math.sqrt(vx^2+vy^2)
+				vx = radius*math.cos(cangle)
+				vy = radius*math.sin(cangle)
+				if amZooming then
+					levelData[key]["xvel"] = vx 
+					levelData[key]["yvel"] = vy
+				else
+					levelData[key]["image"]:setLinearVelocity(vx,vy,levelData[key]["image"].x,levelData[key]["image"].y) 
+				end
+			end
+			--if levelData[key]["field"] then
+			--	levelData[key]["field"].x = levelData[key]["image"].x
+			--	levelData[key]["field"].y = levelData[key]["image"].y
+			--end
+		end
+	end
+end
+
+function moveCamera(ddx,ddy,auto_moved)
+	if ( CameraX - ddx > maxX or CameraX - ddx < minX or CameraY - ddy > maxY or CameraY - ddy < minY ) then
+		print("Camerax,CameraY",CameraX,CameraY)
+		if auto_moved then
+			GameEndReason = "Stranded in space!"
+		end
+		return
+	end
+	CameraX = CameraX - ddx; --move level reference point
+	CameraY = CameraY - ddy;
+	
+	for key,value in pairs(levelData) do
+		if( levelData[key]["image"] and levelData[key]["image"].isVisible and levelData[key]["image"].x ) then
+			levelData[key]["image"].x = levelData[key]["image"].x + ddx
+			levelData[key]["image"].y = levelData[key]["image"].y + ddy
+			if levelData[key]["field"] and levelData[key]["field"].isVisible then
+				levelData[key]["field"].x = levelData[key]["image"].x
+				levelData[key]["field"].y = levelData[key]["image"].y
+			end
+		end
+	end
+end
+
+function getTouchAngle()
+	local a1 = nil
+	local a2 = nil
+	local nrt = 0
+	for key,value in pairs(touches) do
+		nrt = nrt + 1
+		if a1 ~= nil and a2 == nil then
+			a2 = key
+		end
+		if a1 == nil then
+			a1 = key
+		end
+	end
+	if a1 ~= nil and a2 ~= nil then
+		return math.atan2(touches[a1].y-touches[a2].y,touches[a1].x-touches[a2].x)
+	end
+	return nil
+end
+
+function GetNRT()
+	local nr = 0
+	for key,value in pairs(touches) do
+		nr = nr + 1
+	end
+	return nr
+end
+
+function IsRoot(event)
+	if touches[event.id] and touches[event.id]["zoomRoot"] then
+		return true
+	end
+	return false
+end
+
+function RegisterTouch(event)
+	if( GetNRT()<2) then
+		touches[event.id] = {}
+		if( GetNRT() == 1 ) then
+			touches[event.id]["zoomRoot"] = true
+		end
+		touches[event.id].x = event.x
+		touches[event.id].y = event.y
+		return true
+	end
+	return false
+end
+
+function UpdateTouch(event)
+	if(touches[event.id])then
+		touches[event.id].x = event.x
+		touches[event.id].y = event.y
+		return true
+	end
+	return false
+end
+
+function UnRegisterTouch(event)
+	if( touches[event.id] ) then
+		touches[event.id] = nil
+		return true
+	end
+	return false
+end
+
+function GetDist()
+	local dx = 0
+	local dy = 0
+	local nr = 2
+	for key,value in pairs(touches) do
+		if nr == 0 then
+			dx = math.sqrt(dx^2+dy^2)
+			break;
+		end
+		if nr == 2 then
+			dx = value.x
+			dy = value.y
+		end
+		if nr == 1 then
+			dx = dx - value.x
+			dy = dy - value.y
+		end
+		nr = nr - 1
+	end
+	return dx
+end
+
+local lastZoomAm = 0;
+local zoomAm = 1
+local NrTriggers = 0 -- debug
+local allowZoom = false;
+function BeginTouch(e)
+	RemoveOnce = true
+	if RegisterTouch(e) and not amZooming then--register this unique tap
+		amRotating = false
+		if amZooming then --the previous zoom has not ended
+			reinstatePhBodies()
+		end
+		if(GetNRT()>1) then
+			firstDist = GetDist()
+			allowZoom = true
+		end
+		amZooming  = false
+		zXanchor   = e.x
+		zYanchor   = e.y
+		TapNotValid = 0
+		lastAngle = nil
+		angleDiff = 0
+	end
+end
+
+function MoveTouch(e)
+	print("Tap move:",AllowZoom)
+	
+	if UpdateTouch(e) then
+		if (GetNRT()>1) then
+			if GetNRT()==2 and allowZoom then
+				zoomAm = zoomAm*((firstDist/GetDist())*ZOOM_AMPLIFYER)
+			end
+			if math.deg(angleDiff) > MAX_TURN_AND_ZOOM and amZooming then
+				amRotating = true
+			end
+			firstDist = GetDist()
+		else
+			if lastTarget then
+				TapNotValid = math.sqrt((zXanchor-e.x)^2+(zYanchor-e.y)^2)
+				tangle = math.atan2(e.y-lastTarget.y,e.x-lastTarget.x)
+			else
+				TapNotValid = TapNotValid + math.sqrt((zXanchor-e.x)^2+(zYanchor-e.y)^2)
+				--if levelData["player"]["joint"] then
+				cameraReady = false
+				moveCamera((e.x-zXanchor),(e.y-zYanchor),false)
+				--end
+				zXanchor = e.x
+				zYanchor = e.y
+			end
+			if(AllowArrow)then
+				moveArrow(e.x,e.y)
+			end
+		end
+	end
+end
+
+function EndTouch(e)
+	if UnRegisterTouch(e) then
+		print("End touch called:",GetNRT())
+		if TapNotValid < MAX_TAP_TOLERANCE then
+			TapNotValid = 0
+		end
+		local force = 0
+		if GetNRT() < 1 then
+			if amZooming == false then
+				--asteroid
+				if(AllowArrow)then
+					AllowArrow = false
+					force = endArrow(e)
+					if TapNotValid < MAX_TAP_TOLERANCE then
+						TapNotValid = 0
+					end
+				end
+				if levelData["player"]["joint"] then
+					if TapNotValid == 0 then -- a tap outside any asteroid
+						OnTap(e)
+					else
+						if(lastTarget and force>0) then -- a drag originated on an asteroid
+							TelekinesisPush(lastTarget,tangle,force)
+						end
+					end
+				else -- mid flight tap/drag
+					if TapNotValid == 0 then
+						if cameraReady == false then --and levelData["player"]["joint"] then
+							print("Camera set to ready")
+							cameraReady = true
+						end
+					end
+					if levelData["player"]["teleJoint"] then
+						TelekinesisUnHook()
+					else
+						if lastTarget then
+							TelekinesisHook(lastTarget)
+						end
+					end
+				end
+			end
+			lastTarget = nil
+			if amZooming then
+				amZooming = false;
+				reinstatePhBodies()
+			end
+			if(AllowArrow)then
+				AllowArrow = false
+				force = endArrow(e)
+				if TapNotValid < MAX_TAP_TOLERANCE then
+					TapNotValid = 0
+				end
+			end
+		end
+	end
+end
+
+local Activated = false
+function SwitchTapMode(e)
+	if e.phase ~= "began" then
+		local ret = Activated
+		if e.phase == "ended" then
+			Activated = false;
+		end
+		return ret;
+	end
+	Activated = true;
+	print("tap mode on:",e.target.name)
+	if(e.target.name == "flame") then
+		selector.isVisible = true
+		selector.x = flame.x + flame.width/2
+		selector.y = flame.y - flame.height/2
+		TapActionSelector = "conjureExplosion"
+	elseif(e.target.name == "vacuum") then
+		selector.isVisible = true
+		selector.x = vacuum.x + vacuum.width/2
+		selector.y = vacuum.y - vacuum.height/2
+		TapActionSelector = "conjureImplosion"
+	else
+		--debug
+		--reinstatePhBodies()
+			
+			range = display.newImageRect("fld.png",levelData["player"]["image"].width * TelekinesisRange*2,levelData["player"]["image"].width * TelekinesisRange*2) 
+			--display.newCircle(levelData["player"]["image"].x,levelData["player"]["image"].y,levelData["player"]["image"].width * TelekinesisRange)
+			--also ad a nice bordering image
+			addToOwned("player",range,false,{key = "rangeShow",entermode = "fade",exitmode = "fade",wait = 60, ialpha = 0.3,fillColor ={r=230,g=0,b=255}});
+			group:insert(range)
+	
+		selector.isVisible = false
+		TapActionSelector = "jump"
+	end
+	return true
+end
+
+function createStatusBar(showFV)
+	local w = display.contentWidth
+	local icsize = w/9
+	local h = icsize
+	local spacing = 0;
+	if icsize > h then
+		icsize = h
+		spacing = (w-6*icsize)/5.0
+	end
+	statusBar = display.newRect(0, 0, w, h)
+	statusBar.strokewidth = 1
+	statusBar:setFillColor(128,128,128)
+	statusBar:setStrokeColor(128,128,128)
+	statusBar.alpha=0.5
+--  Star rating part, can be modified to show normal and dimmed stars	
+	stars[1] = display.newImageRect(SELECTED_SKIN_PACK.."staticstar.png",SKIN_BASE_DIR, icsize, icsize)
+	stars[1]:setReferencePoint(display.BottomLeftReferencePoint)
+	stars[1].x = 0
+	stars[1].y = h
+	stars[1].isVisible = false
+	
+	stars[2] = display.newImageRect(SELECTED_SKIN_PACK.."staticstar.png",SKIN_BASE_DIR, icsize, icsize)
+	stars[2]:setReferencePoint(display.BottomLeftReferencePoint)
+	stars[2].x = icsize
+	stars[2].y = stars[1].y
+	stars[2].isVisible = false
+	
+	stars[3] = display.newImageRect(SELECTED_SKIN_PACK.."staticstar.png",SKIN_BASE_DIR, icsize, icsize)
+	stars[3]:setReferencePoint(display.BottomLeftReferencePoint)
+	stars[3].x = icsize*2
+	stars[3].y = stars[1].y
+	stars[3].isVisible = false
+	
+	starSlot1 = display.newImageRect(SELECTED_SKIN_PACK.."EmptyStar.png",SKIN_BASE_DIR, icsize, icsize)
+	starSlot1.x = stars[1].x+icsize/2;
+	starSlot1.y = h-icsize/2;
+	
+	starSlot2 = display.newImageRect(SELECTED_SKIN_PACK.."EmptyStar.png",SKIN_BASE_DIR, icsize, icsize)
+	starSlot2.x = stars[2].x+icsize/2;
+	starSlot2.y = starSlot1.y;
+	
+	starSlot3 = display.newImageRect(SELECTED_SKIN_PACK.."EmptyStar.png",SKIN_BASE_DIR, icsize, icsize)
+	starSlot3.x = stars[3].x+icsize/2;
+	starSlot3.y = starSlot1.y;
+	
+--  Vacuum and flames (no instructions given, thus it only has pictures with text next to them
+	
+	flame = display.newImageRect(SELECTED_SKIN_PACK.."flame.png",SKIN_BASE_DIR, icsize, icsize)
+	flame:setReferencePoint(display.BottomLeftReferencePoint)
+	flame.x = icsize*3
+	flame.y = stars[1].y
+	flame.name = "flame"
+	flame.alpha=0.5
+	
+	flameScore = display.newText(tostring(nrFlames),icsize, icsize, native.systemFont, 32)
+	flameScore:setReferencePoint(display.BottomLeftReferencePoint)
+	flameScore.x = icsize*4
+	flameScore.y = stars[1].y
+	flameScore.name = "flame"
+	
+	vacuum = display.newImageRect(SELECTED_SKIN_PACK.."vacuum.png",SKIN_BASE_DIR, icsize, icsize)
+	vacuum:setReferencePoint(display.BottomLeftReferencePoint)
+	vacuum.x = icsize*5
+	vacuum.y = stars[1].y
+	vacuum.name = "vacuum"
+	vacuum.alpha=0.5
+	
+	vacuumScore = display.newText(tostring(nrVacums), icsize, icsize, native.systemFont, 32)
+	vacuumScore:setReferencePoint(display.BottomLeftReferencePoint)
+	vacuumScore.x = icsize*6
+	vacuumScore.y = stars[1].y
+	vacuumScore.name = "vacuum"
+	
+	gold = display.newImageRect(SELECTED_SKIN_PACK.."vacuum.png",SKIN_BASE_DIR, icsize, icsize)
+	gold:setReferencePoint(display.BottomLeftReferencePoint)
+	gold.x = icsize*7
+	gold.y = stars[1].y
+	gold.name = "gold"
+	gold.alpha=0.5
+	
+	goldScore = display.newText(tostring(nrGold), icsize, icsize, native.systemFont, 32)
+	goldScore:setReferencePoint(display.BottomLeftReferencePoint)
+	goldScore.x = icsize*8
+	goldScore.y = stars[1].y
+	goldScore.name = "gold"
+	
+	selector = display.newImageRect(SELECTED_SKIN_PACK.."selector.png",SKIN_BASE_DIR,icsize*3,icsize*3)
+	selector.x = 0
+	selector.y = 0
+	selector.isVisible = false
+	selector.alpha=0.5
+	
+	if showFV == false then
+		flame.isVisible = false
+		flameScore.isVisible = false
+		vacuum.isVisible = false
+		vacuumScore.isVisible = false
+	end
+	
+	flame:addEventListener("touch",SwitchTapMode)
+	flameScore:addEventListener("touch",SwitchTapMode)
+	vacuum:addEventListener("touch",SwitchTapMode)
+	vacuumScore:addEventListener("touch",SwitchTapMode)
+	statusBar:addEventListener("touch",SwitchTapMode)
+	
+	group:insert(statusBar)
+	group:insert(starSlot1)
+	group:insert(starSlot2)
+	group:insert(starSlot3)
+	group:insert(stars[1])
+	group:insert(stars[2])
+	group:insert(stars[3])
+	group:insert(selector)
+	group:insert(flame)
+	group:insert(flameScore)
+	group:insert(vacuum)
+	group:insert(vacuumScore)
+	group:insert(gold)
+	group:insert(goldScore)
+end
+
+function ClearStatusBar()
+	flame:removeEventListener("touch",SwitchTapMode)
+	flameScore:removeEventListener("touch",SwitchTapMode)
+	vacuum:removeEventListener("touch",SwitchTapMode)
+	vacuumScore:removeEventListener("touch",SwitchTapMode)
+	statusBar:removeEventListener("touch",SwitchTapMode)
+end
+
+function setNrStars(nrs)
+	if nrs > 3 then
+		return
+	end
+	if nrs <=3 and nrs>=0 then
+		nrStars = nrs
+		for i=1,nrStars do
+			stars[i].isVisible = true
+		end
+	end
+end
+
+function setNrFlames(nr)
+	if nr > 999 then
+		return
+	end
+	if(nr<0) then
+		flame.isVisible = false
+		flameScore.isVisible = false
+	else
+		flame.isVisible = true
+		flameScore.isVisible = true
+		flameScore.text = tostring(nr)
+	end
+end
+
+function setNrVacuums(nr)
+	if nr > 999 then
+		return
+	end
+	if(nr<0) then
+		vacuum.isVisible = false
+		vacuumScore.isVisible = false
+	else
+		vacuum.isVisible = true
+		vacuumScore.isVisible = true
+		vacuumScore.text = tostring(nr)
+	end
+end
+
+function setNrGold(nr)
+	if nr > 9999 then
+		return
+	end
+	if(nr<0) then
+		gold.isVisible = false
+		goldScore.isVisible = false
+	else
+		gold.isVisible = true
+		goldScore.isVisible = true
+		goldScore.text = tostring(nr)
+	end
+end
+
+--------------------------------------------- END OF STS CODE ---------------------------------------------
+require "io"
+require "math"
+pauseMenu = display.newGroup()
+function SwitchAnimation(key,index)
+	if levelData[key] then
+	if levelData[key]["animations"] then
+		if(levelData[key]["animationIndex"] == index or index > #levelData[key]["animations"] ) then
+			return
+		end
+		if(levelData[key]["animationIndex"] ~= 0) then
+			levelData[key]["animations"][levelData[key]["animationIndex"]]:pause()
+			levelData[key]["animations"][levelData[key]["animationIndex"]].isVisible = false
+		end
+		levelData[key]["fallBackIndex"] = levelData[key]["animationIndex"]
+		if levelData[key]["fallBackIndex"]<1 then
+			levelData[key]["fallBackIndex"] = 1
+		end
+		
+		if(levelData[key]["image"] and not levelData[key]["image"].isVisible ) then
+			return
+		end
+		if index == 0 then
+			if(levelData[key]["image"])then
+				levelData[key]["image"].alpha = 1
+			end
+			return
+		end
+		if(levelData[key]["image"])then
+			levelData[key]["image"].alpha = 0
+		end
+		levelData[key]["animationIndex"] = index
+		levelData[key]["animations"][index].x = levelData[key]["image"].x
+		levelData[key]["animations"][index].y = levelData[key]["image"].y
+		levelData[key]["animations"][index].width = levelData[key]["image"].width
+		levelData[key]["animations"][index].height = levelData[key]["image"].height
+		levelData[key]["animations"][index].isVisible = true
+		levelData[key]["animations"][index]:play()
+	end
+	end
+end
+
+function NoAnimations(key)
+	if levelData[key]["animations"] then
+		for i = 1,#levelData[key]["animations"] do
+			levelData[key]["animations"][i]:pause()
+			levelData[key]["animations"][i].isVisible = false
+		end
+		levelData[key]["animationIndex"] = 0
+	end
+end
+
+function SwitchAnimBack(e)
+	if(e.phase == "ended")then
+		if(e.target.name == "player") then
+			if(levelData["player"]["joint"])then
+				SwitchAnimation("player",1)
+			else
+				SwitchAnimation("player",3)
+			end
+		else
+			SwitchAnimation(e.target.name,levelData[e.target.name]["fallBackIndex"])
+		end
+	end
+end
+
+function addToOwned(key,obj,strict,args)
+	-- 'key' is the key for the name of the owned object ( obj )
+	--  obj is the owned object
+	--  strict = false allows the key to be the same with an already existing key ( it appends a . to the key to make it unique )
+	--  args are the arguments describing the behaviour of the added object
+	
+	-- adding decorative images to game objects
+	-- these images are owned by the game objects and therefore move and scale
+	-- along with their owners
+	print("Add to owned call: ",key,args["key"],args["entermode"])
+	obj.isVisible = true
+	if levelData[key]["owns"] == nil then -- if there is no owned objects list then create one
+		levelData[key]["owns"] = {}
+	end
+	
+	if args["key"] == nil then
+		args["key"] = "doe"
+	end
+	if args["ialpha"] then
+		obj.alpha = args["ialpha"]
+	end
+	
+	if args["entermode"] ~= nil and args["entermode"] == "fade" then
+		if args["faderate"] == nil then 
+			args["faderate"] = "0.01" 
+		end
+		if args["fadeto"] == nil then
+			args["fadeto"] = obj.alpha
+		end
+		if args["wait"] == nil then
+			args["wait"] = 1
+		end
+		print("Have set",key,"to entermode: fade")
+		obj.alpha = 0;
+	end	
+	
+	if args["wait"] == nil then -- object that stays there 
+		args["wait"] = -1
+		args["entermode"] = "none"
+		args["exitmode"]  = "none" 
+	end
+	
+	if args["fillColor"] and args["fillColor"]["r"] and args["fillColor"]["g"] and args["fillColor"]["b"] then
+		obj:setFillColor(args["fillColor"]["r"],args["fillColor"]["g"],args["fillColor"]["b"])
+	end
+	
+	-- make sure key is unique and strict is respected
+	if levelData[key]["owns"][args["key"]] then
+		if strict then -- strict means only one owned element of a certain key can exist
+			levelData[key]["owns"][args["key"]]["image"].isVisible = true
+			return
+		else
+			while levelData[key]["owns"][args["key"]] do -- append . to the key that is not unique to make it unique
+				args["key"] = args["key"].."."
+			end
+		end
+	end
+	
+	levelData[key]["owns"][args["key"]] = {}
+	levelData[key]["owns"][args["key"]]["image"] = obj;
+	for k,v in pairs(args) do
+		if k ~= "key" then
+			print("copying owned object properties:",k,v);
+			levelData[key]["owns"][args["key"]][k] = v
+		end
+	end	
+	
+end
+
+function AddPhToBody(obj)
+	if obj["density"] == nil then --this object is purely decorative
+		return true
+	end
+	--print("reinstating body:",tonumber(obj["density"]),tonumber(obj["friction"]),tonumber(obj["bounce"]),tonumber(obj["image"].width/2))
+	if obj["image"].name:find("Trinket") then
+		physics.addBody( obj["image"], "dynamic" ,{ isSensor = true, radius = tonumber(obj["image"].width/2) } )
+	else
+		if(obj["image"].name:find("player"))then
+			physics.addBody( obj["image"], obj["bodyType"] ,{ density = tonumber(obj["density"]), friction = tonumber(obj["friction"]), bounce = tonumber(obj["bounce"]), radius = tonumber(obj["image"].width*0.45) } )
+		else
+			physics.addBody( obj["image"], obj["bodyType"] ,{ density = tonumber(obj["density"]), friction = tonumber(obj["friction"]), bounce = tonumber(obj["bounce"]), radius = tonumber(obj["image"].width/2) } )
+		end
+	end
+end
+
+function TriggerPauseMenu()
+	if pauseMenu.isVisible then
+		pauseMenu.isVisible = false
+		pauseBtn.isVisible = true
+		pauseMenu:toFront()
+	else
+		FreezeGame()
+		pauseBtn.isVisible = false
+		--maybe animate
+		pauseMenu.isVisible = true
+		if NO_RETRY then
+			retryButton.isVisible = false
+		end
+	end
+	return true
+end
+
+function DecreaseEnemyHealth(key,amount)
+	if levelData[key]== nil then
+		return
+	end
+	--debug
+	if  levelData[key]["health"] == nil then
+		 levelData[key]["health"] = 100;
+	end
+	-- end debug
+	if amount == nil then
+		return
+	end
+	print("Enemy health:",levelData[key]["health"]," decreasing by:",amount);
+	if( levelData[key]["health"] ) then
+		levelData[key]["health"] = levelData[key]["health"] - amount; 
+		if(levelData[key]["health"] <= 0) then--remove enemy
+			RemoveItem(key,false);
+		end
+	end
+end
+
+function EnemyHook(parent)
+	if levelData["player"]["enemyJoints"][parent] == nil then
+		levelData["player"]["enemyJoints"][parent] = physics.newJoint( "touch", levelData["player"]["image"], levelData["player"]["image"].x, levelData["player"]["image"].y )
+		local dragForce = 1 
+		if levelData[parent]["dragForce"] then
+			dragForce = tonumber(levelData[parent]["dragForce"])
+		end
+		levelData["player"]["enemyJoints"][parent].maxforce = dragForce * levelData[parent]["image"].width
+		levelData["player"]["enemyJoints"][parent].frequency = 0.5
+		levelData["player"]["enemyJoints"][parent].dampingRatio = 0.0
+		levelData["player"]["enemyJoints"][parent]:setTarget( parent.x, parent.y )
+		if(levelData["player"]["Eanimations"][parent].isVisible == false ) then
+			levelData["player"]["Eanimations"][parent]:play()
+		end
+		levelData["player"]["Eanimations"][parent].isVisible = true
+		SwitchAnimation(parent.name,1)
+	end
+end
+
+function EnemyUnHook(parent,unload)
+	if levelData["player"]["enemyJoints"][parent] then
+		levelData["player"]["Eanimations"][parent].isVisible = false
+		levelData["player"]["Eanimations"][parent]:pause()
+		if(unload)then
+			levelData["player"]["Eanimations"][parent]:removeSelf()
+			levelData["player"]["Eanimations"][parent] = nil
+		end
+		levelData["player"]["enemyJoints"][parent]:removeSelf()
+		levelData["player"]["enemyJoints"][parent] = nil
+		SwitchAnimation(parent,3)--put back to 3 (static)
+	end
+end
+
+function UnhookAllEnemies()
+	for enemy,val in pairs(levelData["player"]["enemyJoints"]) do
+		EnemyUnHook(enemy,true)
+	end
+end
+
+function TelekinesisHook(obj)
+	if levelData["player"]["teleJoint"] == nil and obj then
+		local dist = math.sqrt((levelData["player"]["image"].x-obj.x)^2 + (levelData["player"]["image"].y-obj.y)^2)
+		if dist <= levelData["player"]["image"].width * TelekinesisRange then
+			local crateA = levelData["player"]["image"]
+			local crateB = obj
+			levelData["player"]["jointTarget"] = obj
+			levelData["player"]["teleJoint"] = physics.newJoint( "touch", levelData["player"]["image"], levelData["player"]["image"].x, levelData["player"]["image"].y )
+			levelData["player"]["teleJoint"].frequency = 0.4
+			levelData["player"]["teleJoint"].dampingRatio = 0.0
+			levelData["player"]["teleJoint"]:setTarget( obj.x, obj.y )
+			levelData["player"]["animation"].isVisible = true
+			levelData["player"]["animation"]:play()
+			SwitchAnimation("player",3)
+		else
+			range = display.newImageRect("fld.png",levelData["player"]["image"].width * TelekinesisRange*2,levelData["player"]["image"].width * TelekinesisRange*2)
+			--display.newCircle(levelData["player"]["image"].x,levelData["player"]["image"].y,levelData["player"]["image"].width * TelekinesisRange)
+			--also ad a nice bordering image
+			addToOwned("player",range,true,{key = "rangeShow",entermode = "fade",exitmode = "fade",wait = 60, ialpha = 0.3, fillColor ={r=230,g=0,b=255} });
+			group:insert(range)
+		end
+	end
+end
+
+function TelekinesisUnHook()
+	if levelData["player"]["teleJoint"] then
+		levelData["player"]["jointTarget"] = nil
+		levelData["player"]["teleJoint"]:removeSelf()
+		levelData["player"]["teleJoint"] = nil
+		levelData["player"]["animation"].isVisible = false
+		levelData["player"]["animation"]:pause()
+		SwitchAnimation("player",4)
+	end
+end
+
+function TelekinesisPush(object,angle,force)
+	if(object) then
+		if levelData[object.name]["underTelekinesis"] == nil then
+			--create animation
+			print("Moving with telekinesis:",math.deg(angle))
+			levelData[object.name]["underTelekinesis"] = true
+			object:applyLinearImpulse(force * math.cos(angle),force * math.sin(angle),object.x,object.y)
+			SwitchAnimation("player",2)
+		end
+	else
+		print("TelekinesisPush failed because object was void")
+	end
+end
+
+function backToMenu()
+	GameEndReason = "quit"
+	EndGame()
+	return true
+end
+
+function DestroyObject(obj)
+	if obj then
+		obj:removeSelf()
+		obj = nil
+	end
+end
+
+function UnloadObjects()
+	DestroyObject(background)
+	for key,value in pairs(levelData) do
+		levelData[key]=nil
+	end
+end
+
+function DeleteCapturerAndPrey()
+	if Capturer then
+		SwitchAnimation(Capturer,0)
+		levelData[Capturer]["image"].isVisible = false
+	end
+	SwitchAnimation("player",0)
+	levelData["player"]["image"].isVisible = false
+end
+
+local EndAnimation = nil;
+function ExitStageUponAnimation(e)
+	if(e.phase == "ended") then
+		levelData["player"]["end_anim"][EndAnimation]:removeSelf()
+		levelData["player"]["end_anim"][EndAnimation] = nil
+		--storyboard.gotoScene(GoToWhatScene,"fade",fdspd)
+		--storyboard.removeScene("engine")
+	end
+end
+function ClearAllAnimations()
+	levelData["player"]["animation"].isVisible = false
+	for i = 1,#levelData["player"]["Eanimations"] do
+		levelData["player"]["Eanimations"][i].isVisible = false
+	end
+	for key,val in pairs(levelData) do
+		if levelData[key]["animations"] then
+			for i = 1,#levelData[key]["animations"] do
+				levelData[key]["animations"][i].isVisible = false
+			end
+		end
+	end
+	for i = 1,#animations do
+		animations[i]["animation"].isVisible = false
+		print("Stopped anim:",i)
+	end
+end
+local GameEnded = false
+function EndGame()
+	if(GameEnded == true) then
+		return
+	end
+	GameEnded = true
+	print("Game ending...")
+	TelekinesisUnHook()
+	UnhookAllEnemies()
+	FreezeGame()
+	ClearStatusBar()
+	ClearAllAnimations()
+	ClearListeners()
+	Runtime:removeEventListener("enterFrame",frameEnter)
+	print("Game Ended:",GameEndReason)
+	local prev_NXT_state = NO_NEXT
+	NO_NEXT = true
+	if GameEndReason == "Got captured!" then
+		--animate catch
+		timer.performWithDelay(50,DeleteCapturerAndPrey,1)
+		
+		local scaleX = (levelData["player"]["image"].width+levelData[Capturer]["image"].width*2.5)/200
+		local scaleY = (levelData["player"]["image"].height+levelData[Capturer]["image"].height*2.5)/200
+		EndAnimation = "magicDust"	
+		levelData["player"]["end_anim"]["magicDust"]:scale(scaleX,scaleY)
+		levelData["player"]["end_anim"]["magicDust"].x = (levelData["player"]["image"].x+levelData[Capturer]["image"].x)/2
+		levelData["player"]["end_anim"]["magicDust"].y = (levelData["player"]["image"].y+levelData[Capturer]["image"].y)/2
+		levelData["player"]["end_anim"]["magicDust"].isVisible = true;
+		
+		levelData["player"]["end_anim"]["magicDust"]:play();
+		levelData["player"]["end_anim"]["magicDust"]:addEventListener("sprite",ExitStageUponAnimation)
+		GoToWhatScene = "endinganimator"
+	end
+	if GameEndReason == "Stranded in space!" then
+		--animate stranded
+		GoToWhatScene = "endinganimator"
+	end
+	if GameEndReason == "Absorbed into nothingness!" then
+		--animate sucked
+		GoToWhatScene = "endinganimator"
+	end
+	if GameEndReason == "Crashed!" then
+		--animate crushed
+		--[[EndAnimation = "crash"
+		timer.performWithDelay(50,DeleteCapturerAndPrey,1)
+		levelData["player"]["end_anim"]["crash"].width = levelData["player"]["image"].width
+		levelData["player"]["end_anim"]["crash"].width = levelData["player"]["image"].height
+		levelData["player"]["end_anim"]["crash"].x = levelData["player"]["image"].x
+		levelData["player"]["end_anim"]["crash"].y = levelData["player"]["image"].y
+		levelData["player"]["end_anim"]["crash"].rotation = levelData["player"]["image"].rotation
+		levelData["player"]["end_anim"]["crash"].isVisible = true
+		levelData["player"]["end_anim"]["crash"]:play()
+		levelData["player"]["end_anim"]["crash"]:addEventListener("sprite",ExitStageUponAnimation)
+		]]--
+		GoToWhatScene = "endinganimator"
+	end
+	if GameEndReason == "Finished!" then
+		NO_NEXT = prev_NXT_state
+		--animate won
+		GoToWhatScene = "endinganimator"
+	end
+	if GameEndReason == "quit" then
+		storyboard.removeScene("engine")
+		GoToWhatScene = "showLevels"
+	end
+	if GameEndReason == "retry" then
+		GoToWhatScene = "reset"
+	end
+	if EndAnimation == nil then
+		print("Removing Scene...")
+		storyboard.gotoScene(GoToWhatScene,"fade",fdspd)
+		--storyboard.removeScene("engine")
+	end
+end
+function UpdateJoint(left,id)
+	local other = levelData[left]["jointWith"][id]
+	if( levelData[other] == nil or levelData[other]["image"] == nil ) then
+		return
+	end
+	local dsx = levelData[other]["image"].x - levelData[left]["image"].x 
+	local dsy = levelData[other]["image"].y - levelData[left]["image"].y
+	local angle = math.atan2(dsy,dsx)
+	local wii = math.sqrt(dsx^2+dsy^2)
+
+	if levelData[left]["jimages"] == nil then
+		levelData[left]["jimages"] = {}
+	end
+	if levelData[left]["jimages"][id] == nil then
+		local wcoef = 0.25
+		local hee = levelData[left]["image"].width*wcoef
+		if levelData[other]["image"].width*wcoef < hee then
+			hee = levelData[other]["image"].width*wcoef
+		end
+		print("creating joint image")
+		levelData[left]["jimages"][id] = display.newRect(0,0,wii,hee)
+		levelData[left]["jimages"][id].alpha = 0.3
+		group:insert(levelData[left]["jimages"][id])
+	end
+	if wii == 0 then
+		wii = 0.1
+	end
+	levelData[left]["jimages"][id].width = wii
+	levelData[left]["jimages"][id].rotation = math.deg(angle)
+	levelData[left]["jimages"][id].x = levelData[left]["image"].x+dsx/2 
+	levelData[left]["jimages"][id].y = levelData[left]["image"].y+dsy/2
+end
+function KeepPlayerCloseToAsteroid(ast)
+	local angle = math.atan2(levelData["player"]["image"].y - ast.y , levelData["player"]["image"].x - ast.x)
+	local radius = tonumber(ast.width/2) + tonumber(levelData["player"]["image"].width/2);
+	local dist = math.sqrt(( levelData["player"]["image"].x - ast.x )^2 + ( levelData["player"]["image"].y - ast.y )^2 )
+	local weldX = ast.x + math.floor(radius * math.cos(angle))
+	local weldY = ast.y + math.floor(radius * math.sin(angle))
+	print("dist",dist)
+	levelData["player"]["image"].x = weldX
+	levelData["player"]["image"].y = weldY
+end
+function ABSangle(angle)
+	if angle>0 then
+		return angle
+	end
+	return math.pi + angle;
+end
+function AttachPlayer(object,removeCrnt)
+	print("#Attaching...")
+	local sameAstero = false
+	if( object == levelData["player"]["joinWith"] ) then
+		sameAstero = true
+	end
+	
+	levelData["player"]["joinTarget"] = nil
+	levelData["player"]["joinWith"] = object
+	if removeCrnt then
+		levelData["player"]["image"]:setLinearVelocity(0,0)
+	end
+
+	local mouseHeading = nil
+	print("Mouse issue:",levelData["player"]["MX"],levelData["player"]["MY"])
+	if(levelData["player"]["MX"] == nil ) then
+		sameAstero = false
+	else
+		mouseHeading = math.atan2(levelData["player"]["MY"] - object["image"].y , levelData["player"]["MX"] - object["image"].x)
+	end
+	
+	local angle = math.atan2(levelData["player"]["image"].y - object["image"].y , levelData["player"]["image"].x - object["image"].x)
+	local radius = (tonumber(object["image"].width/2) + tonumber((levelData["player"]["image"].width*0.9)/2));
+	local dist = math.sqrt(( levelData["player"]["image"].x - object["image"].x )^2 + ( levelData["player"]["image"].y - object["image"].y )^2 )
+	
+	local sgn = 1
+	print("Attaching: same astero?",sameAstero)
+	if( sameAstero ) then
+		print("Tap Angle:",mouseHeading,"Player Angle",angle)
+		local _angle = angle
+		if(_angle < 0 and mouseHeading > 0)then
+			_angle = -_angle
+		end
+		if( _angle > 0 and mouseHeading < 0)then
+			mouseHeading = -mouseHeading
+		end
+		if mouseHeading - _angle < 0 then
+			sgn = -1
+		end
+		local ang = 45 * levelData["player"]["image"].width / object["image"].width;
+		if ang > 45 then
+			ang = 45
+		end
+		--angle = angle + sgn*math.rad(ang) -- in stead of an angle for all asteroids give a circle arc
+	end
+	
+	local weldX = object["image"].x + math.floor(radius * math.cos(angle))
+	local weldY = object["image"].y + math.floor(radius * math.sin(angle))
+	levelData["player"]["image"].x = weldX
+	levelData["player"]["image"].y = weldY
+	
+	levelData["player"]["weldX"] = object["image"].x + math.floor((radius+2) * math.cos(angle))
+	levelData["player"]["weldY"] = object["image"].y + math.floor((radius+2) * math.sin(angle))
+	levelData["player"]["heading"] = math.rad(math.deg(angle+math.rad(90))%360)
+	
+	dist = math.sqrt(( levelData["player"]["image"].x - object["image"].x )^2 + ( levelData["player"]["image"].y - object["image"].y )^2 )
+	print("new dist",dist,"r",radius)
+	local percentage = levelData["player"]["image"].width/2/dist
+	levelData["player"]["weldX"] = levelData["player"]["image"].x + ( levelData["player"]["image"].x - object["image"].x )*percentage
+	levelData["player"]["weldY"] = levelData["player"]["image"].y + ( levelData["player"]["image"].y - object["image"].y )*percentage
+	if(	removeCrnt and levelData["player"]["joint"] ) then
+		levelData["player"]["joint"]:removeSelf()
+		levelData["player"]["joint"] = nil
+		levelData["player"]["noApply"] = true
+	end
+	
+	levelData["player"]["rotPace"] = (math.deg(levelData["player"]["heading"]) - levelData["player"]["image"].rotation) / ROTATION_PACE   
+	print("Heading:",math.deg(levelData["player"]["heading"]),"Current:",levelData["player"]["image"].rotation,"pace:",levelData["player"]["rotPace"])
+	print("PLAYER REATTACH")
+	levelData["player"]["joint"] = physics.newJoint( "pivot",object["image"],levelData["player"]["image"], levelData["player"]["image"].x,levelData["player"]["image"].y )
+	levelData["player"]["allowAnim"] = true
+	SwitchAnimation("player",1)
+	levelData["player"]["detached"] = false;
+	if levelData["player"]["teleJoint"] then
+		TelekinesisUnHook()
+	end
+end
+function removePhBodies( key )
+	if levelData[key]["field"] and levelData[key]["field"].isVisible then
+		physics.removeBody(levelData[key]["field"])
+	end
+	physics.removeBody(levelData[key]["image"])
+end
+function mendPositions( key )
+	for key,obj in pairs(levelData) do
+		levelData[key]["image"].x=levelData[key]["x"];
+		levelData[key]["image"].y=levelData[key]["y"];
+		--local k = display.newLine(levelData[key]["image"].x,levelData[key]["image"].y-levelData[key]["image"].height/2,levelData[key]["image"].x,levelData[key]["image"].y+levelData[key]["image"].height/2)
+		--local l = display.newLine(levelData[key]["image"].x-levelData[key]["image"].width/2,levelData[key]["image"].y,levelData[key]["image"].x+levelData[key]["image"].width/2,levelData[key]["image"].y)
+	end
+end
+function reinstatePhBodies( keyson ) -- this causes the objects to move
+	print("Reinstating: keyson:",keyson)
+	if ( not keyson and reinstatereinstated == true ) then
+		return;
+	end
+	
+	reinstated = true;
+	for key,obj in pairs(levelData) do
+		if levelData[key]["image"].isVisible and ( key == keyson or keyson == nil ) then
+			levelData[key]["x"]=levelData[key]["image"].x;
+			levelData[key]["y"]=levelData[key]["image"].y;
+			AddPhToBody(levelData[key])
+			if levelData[key]["xvel"] then
+				levelData[key]["image"]:setLinearVelocity(levelData[key]["xvel"],levelData[key]["yvel"])
+				levelData[key]["image"].angularVelocity = levelData[key]["angleVel"];
+				levelData[key]["xvel"] = nil
+				levelData[key]["yvel"] = nil
+			end
+		end
+		--debug
+		--local dbg = display.newCircle(levelData[key]["image"].x,levelData[key]["image"].y,levelData[key]["image"].height/2);
+		--dbg.alpha = 0.4;
+	end
+	if keyson == "player" or keyson == nil then
+		-- reinstate tele hook
+		if levelData["player"]["jointTarget"] then
+			levelData["player"]["teleJoint"] = nil
+			TelekinesisHook(levelData["player"]["jointTarget"])
+		end
+	end
+	if keyson == nil or keyson:find("enemy") then
+		-- reinstate enemy hook
+		for enemyID,val in pairs(levelData["player"]["enemyJoints"]) do
+			if levelData[enemyID]["image"].isVisible and levelData["player"]["enemyJoints"][enemyID] then
+				levelData["player"]["enemyJoints"][enemyID] = nil
+				EnemyHook(enemyID,false)
+			end
+		end
+	end
+	-- reinstate player joint
+	if levelData["player"]["detached"] == false then
+		if keyson == nil or keyson == levelData["player"]["joinWith"]["image"].name then 
+			AttachPlayer(levelData["player"]["jcoinWith"],false)
+		end
+	end
+	
+	for key,value in pairs(levelData) do
+		if levelData[key]["image"].isVisible and key == keyson or keyson == nil then
+			if levelData[key]["field"] and levelData[key]["field"].isVisible then
+				physics.addBody( levelData[key]["field"], "static", { isSensor = true, radius = levelData[key]["field"].width/2 } )
+			end
+			-- all joints must be reinstated
+			-- reinstate gravity pull if there is any
+			if levelData[key]["gravityControl"] then
+				for Gparent,val in pairs(levelData[key]["gravityControl"]) do
+					if levelData[key]["gravityControl"][Gparent] then
+						levelData[key]["gravityControl"][Gparent] = 1
+					end
+				end
+			end
+			-- reinstate custom joints if there are any
+			if levelData[key]["joints"] then
+				for i = 1,#levelData[key]["joints"] do
+					if levelData[key]["jimages"][i] then
+						-- reinstate all outgoing joints for all elements
+						local right = levelData[key]["jointWith"][i]
+						if levelData[key]["joints"][i][1] == "elastic" then
+							levelData[key]["joints"][i][2] = physics.newJoint(levelData[key]["joints"][i][1],levelData[key]["image"],levelData[right]["image"],levelData[key]["image"].x,levelData[key]["image"].y,levelData[right]["image"].x,levelData[right]["image"].y)
+						elseif levelData[key]["joints"][i][1] == "pivot" then
+							levelData[key]["joints"][i][2] = physics.newJoint(levelData[key]["joints"][i][1],levelData[key]["image"],levelData[right]["image"],levelData[key]["image"].x,levelData[key]["image"].y)
+						end
+						UpdateJoint(key,i)
+					end
+				end
+			end
+		end
+	end
+	ZoomRecover = true
+	timer.performWithDelay(10,mendPositions,1);
+end
+function zoomObject( coef,key,reinstate )
+	local distX = 0.0
+	local distY = 0.0
+	local angle = 0.0
+	local radius = 0.0
+	local oldW = 0;
+	--general obj zoom
+	oldW = levelData[key]["image"].width
+	levelData[key]["image"].width  = levelData[key]["image"].width * coef
+	levelData[key]["image"].height = levelData[key]["image"].height * coef 
+	
+	if levelData[key]["radius"] then
+		levelData[key]["radius"] = levelData[key]["radius"] * coef 
+	end
+	if levelData[key]["density"] then
+		print("zoom id:",key)
+		levelData[key]["density"] = levelData[key]["density"] * (1/coef)
+		if levelData[key]["xvel"] == nil then
+			local vx,vy = levelData[key]["image"]:getLinearVelocity()
+			levelData[key]["xvel"] = vx
+			levelData[key]["yvel"] = vy
+			levelData[key]["angleVel"] = levelData[key]["image"].angularVelocity;
+		end
+		if levelData[key]["xvel"] then
+			levelData[key]["xvel"] = levelData[key]["xvel"] * coef 
+			levelData[key]["yvel"] = levelData[key]["yvel"] * coef
+		end
+		-- remove all physics
+		if RemoveOnce then
+			removePhBodies( key )
+		end
+	end	
+	-- re position according to distance from center and how much zoom
+	distX = levelData[key]["image"].x - background.x
+	distY = levelData[key]["image"].y - background.y
+	angle = math.atan2(distY,distX)
+	radius = math.sqrt(distX^2+distY^2)
+	radius = (radius * levelData[key]["image"].width) / oldW 
+	levelData[key]["image"].x = background.x + radius*math.cos(angle) 
+	levelData[key]["image"].y = background.y + radius*math.sin(angle)
+	-- add physics back
+	
+	-- reposition and resize field
+	if levelData[key]["field"] then
+		levelData[key]["field"].width = levelData[key]["field"].width * coef
+		levelData[key]["field"].height = levelData[key]["field"].width
+		levelData[key]["field"].x = levelData[key]["image"].x
+		levelData[key]["field"].y = levelData[key]["image"].y
+	end
+	-- reposition and resize joint images
+	if levelData[key]["jimages"] then
+		for i = 1,#levelData[key]["jimages"] do
+			if( levelData[key]["jimages"][i] ) then
+				levelData[key]["jimages"][i].width = levelData[key]["jimages"][i].width*coef
+				levelData[key]["jimages"][i].height = levelData[key]["jimages"][i].height*coef
+				
+				distX = levelData[key]["jimages"][i].x - background.x
+				distY = levelData[key]["jimages"][i].y - background.y
+				angle = math.atan2(distY,distX)
+				radius = math.sqrt(distX^2+distY^2)
+				radius = (radius * coef)
+				levelData[key]["jimages"][i].x = background.x + radius*math.cos(angle) 
+				levelData[key]["jimages"][i].y = background.y + radius*math.sin(angle)
+			end
+		end
+	end
+	if reinstate then
+		reinstatePhBodies(key);
+	end
+end
+function zoomCamera( coef )
+	print("Attempting zoom:",coef)
+	if( levelData["player"] and coef ~= 0) then
+	print("ZOOM: player is present")
+	if( levelData["player"]["image"].width*coef > display.contentWidth*0.01 and levelData["player"]["image"].width*coef < display.contentWidth/3) then 
+	print("ZOOM: dimensions acceptable for zoom")
+	NrTriggers = NrTriggers + 1
+	reinstated = false
+	amZooming = true
+	
+	local distX = 0.0
+	local distY = 0.0
+	local angle = 0.0
+	local radius = 0.0
+	
+	if RemoveOnce then
+		ClearForZoom()
+	end
+	
+	TelekinesisForce = TelekinesisForce * coef
+	FullImpulse = FullImpulse * coef
+	-- zoom player hook
+	if levelData["player"]["detached"] == false then
+		DetachPlayer()
+	end
+	if levelData["player"]["teleJoint"] then
+		levelData["player"]["animation"].width = levelData["player"]["animation"].width*coef
+		levelData["player"]["animation"].height = levelData["player"]["animation"].height*coef
+		
+		distX = levelData["player"]["animation"].x - background.x
+		distY = levelData["player"]["animation"].y - background.y
+		angle = math.atan2(distY,distX)
+		radius = math.sqrt(distX^2+distY^2)
+		radius = (radius * coef)
+		levelData["player"]["animation"].x = background.x + radius*math.cos(angle)
+		levelData["player"]["animation"].y = background.y + radius*math.sin(angle)
+	end
+	--
+	-- repositioning of camera center
+	--
+	--distX = CameraX - background.x
+	--distY = CameraY - background.y
+	--angle = math.atan2(distY,distX)
+	--radius = math.sqrt(distX^2+distY^2)
+	--radius = (radius * coef)
+	--CameraX = background.x + radius*math.cos(angle)
+	--CameraY = background.y + radius*math.sin(angle)
+	--
+	-- end
+	--
+	local oldW = 0
+	--resize all objects
+	for key,value in pairs(levelData) do
+		if value["image"].isVisible then
+			zoomObject(coef,key,false);
+		end
+	end
+	end
+	end
+	RemoveOnce = false
+	print("DONE zooming!")
+end
+function DetachPlayer()
+	if levelData["player"]["joint"] then
+		levelData["player"]["joint"]:removeSelf()
+		levelData["player"]["joint"] = nil
+		levelData["player"]["detached"] = true;
+		print("Player detached")
+	end
+end
+function ClearAnimation(e)
+	if e.phase == "ended" then
+		local id = e.target.id
+		animations[id]["animation"]:removeSelf()
+		animations[id]["animation"] = nil
+		animations[id] = nil
+		
+	end
+end
+function GetAsteroidsInRange(x,y,range)
+	local lst = {}
+	local index = 1
+	for key,value in pairs(levelData) do
+		if key:find("ast") or key:find("boo") or key:find("enemy") or key:find("player") and levelData[key]["image"].isVisible then
+			local dist = math.sqrt((x - levelData[key]["image"].x)^2 + (y - levelData[key]["image"].y)^2)
+			if dist < range then
+				print("Adding",key,"to list or exploded")
+				lst[index] = levelData[key]
+				index = index + 1
+			end
+		end
+	end
+	return lst
+end
+function AddBlastAnimation(Magnitude,Dir,x,y)
+	if(Dir>0) then
+		local sP = { width=64, height=64, numFrames=24, sheetContentWidth=320, sheetContentHeight=320 } 
+		local sD = {name = "normalRun", start=1, count=24, time=400,loopCount = 1,loopDirection="backward"}
+	
+		Magnitude = Magnitude * 2
+		print("Blast of magnitude",Magnitude)
+		local blastID = {"blast",BlastNr}
+		blastID = table.concat(blastID)
+		BlastNr = BlastNr+1
+		animations[blastID] = {}
+		animations[blastID]["Sheet"] = graphics.newImageSheet(SELECTED_SKIN_PACK.."explosion.png",SKIN_BASE_DIR, sP )
+		animations[blastID]["animation"] = display.newSprite( animations[blastID]["Sheet"], sD)
+		--animations[blastID]["animation"].width  = Magnitude/4
+		--animations[blastID]["animation"].height = Magnitude/4
+		animations[blastID]["animation"].x = x
+		animations[blastID]["animation"].y = y
+		animations[blastID]["animation"]:scale(Magnitude/2/64,Magnitude/2/64)
+		animations[blastID]["animation"].id = blastID
+		group:insert(animations[blastID]["animation"])
+		animations[blastID]["animation"]:addEventListener("sprite",ClearAnimation)
+		animations[blastID]["animation"]:play()
+	else
+		local sP = { width=64, height=64, numFrames=24, sheetContentWidth=320, sheetContentHeight=320 } 
+		local sD = {name = "normalRun", start=1, count=24, time=400,loopCount = 1,loopDirection = "backward"}
+	
+		Magnitude = Magnitude * 2
+		print("Blast of magnitude",Magnitude)
+		local blastID = {"blast",BlastNr}
+		blastID = table.concat(blastID)
+		BlastNr = BlastNr+1
+		animations[blastID] = {}
+		animations[blastID]["Sheet"] = graphics.newImageSheet(SELECTED_SKIN_PACK.."explosion.png",SKIN_BASE_DIR, sP )
+		animations[blastID]["animation"] = display.newSprite( animations[blastID]["Sheet"], sD)
+		--animations[blastID]["animation"].width  = Magnitude/4
+		--animations[blastID]["animation"].height = Magnitude/4
+		animations[blastID]["animation"].x = x
+		animations[blastID]["animation"].y = y
+		animations[blastID]["animation"]:scale(Magnitude/2/64,Magnitude/2/64)
+		animations[blastID]["animation"].id = blastID
+		group:insert(animations[blastID]["animation"])
+		animations[blastID]["animation"]:addEventListener("sprite",ClearAnimation)
+		animations[blastID]["animation"]:play()
+	end
+end
+function CreateBlast(origX,origY,Range,Magnitude,Dir)
+	
+	AddBlastAnimation(Range,Dir,origX,origY)
+	list = GetAsteroidsInRange(origX,origY,Range)
+	print("List len:",#list)
+	for i=1,#list do
+		--if( list[i]["image"] ) then
+			local angle = math.atan2( list[i]["image"].y - origY , list[i]["image"].x - origX )
+			local intensity = 1 - math.sqrt( (origX-list[i]["image"].x)^2 + (origY-list[i]["image"].y)^2 ) / Range
+			local impX = intensity * Magnitude * math.cos( angle )
+			local impY = intensity * Magnitude * math.sin( angle )
+			if( Dir < 0) then
+				impX = -impX
+				impY = -impY
+			end
+			print("Creating BLAST for",list[i]["image"].name,i)
+			list[i]["image"]:applyLinearImpulse(impX,impY,list[i]["image"].x,list[i]["image"].y)
+			if(list[i]["image"].name:find("enemy"))then
+				if Magnitude<0 then
+					Magnitude = -Magnitude
+				end
+				DecreaseEnemyHealth(list[i]["image"].name,intensity*Magnitude);
+			end
+		--end
+	end
+end
+
+local PushAway = false
+function OnTap( event )
+	print("#ON TAP CALLED")
+	print("Player Tap:",TapActionSelector," joint status",levelData["player"]["joint"])
+	if levelData["player"]["teleJoint"] then
+		TelekinesisUnHook()
+	end
+	if cameraReady == false then --and levelData["player"]["joint"] then
+		print("Camera set to ready")
+		cameraReady = true
+		if(levelData["player"]["image"].x<0 or levelData["player"]["image"].y<0 or levelData["player"]["image"].x>display.contentWidth or levelData["player"]["image"].y>display.contentHeight) then
+			return
+		end
+	end
+	if(levelData["player"]["joint"]) then
+		if( TapActionSelector == "jump") then
+			DetachPlayer()
+			print("Applying impulse:",FullImpulse*levelData["player"]["image"].width)
+			DebugLabel.text = levelData["player"]["bodyType"]
+			local dx = (event.x - levelData["player"]["image"].x)*1.0
+			local dy = (event.y - levelData["player"]["image"].y)*1.0
+			local angle = math.atan2( dy, dx )
+			levelData["player"]["heading"]   = angle
+			levelData["player"]["impulseX"]  = FullImpulse*levelData["player"]["image"].width*math.cos(angle)
+			levelData["player"]["impulseY"]  = FullImpulse*levelData["player"]["image"].width*math.sin(angle)
+			levelData["player"]["MX"] = event.x
+			levelData["player"]["MY"] = event.y
+			levelData["player"]["allowAnim"] = nil
+			levelData["player"]["image"].rotation = math.deg(levelData["player"]["heading"])+90
+			SwitchAnimation("player",4)
+			PushAway = true
+			levelData["player"]["detached"] = true;
+			elseif TapActionSelector == "conjureExplosion" then
+			local mag = levelData["player"]["image"].width*ActionMagnitude
+			if nrFlames >= ActionTrinketCost then
+				nrFlames = nrFlames - ActionTrinketCost
+				--animate number decrese
+				CreateBlast(event.x,event.y,mag,mag,1)
+				setNrFlames(nrFlames)
+			end
+		elseif TapActionSelector == "conjureImplosion" then
+			local mag = levelData["player"]["image"].width*ActionMagnitude
+			if nrVacums >= ActionTrinketCost then
+				nrVacums = nrVacums - ActionTrinketCost
+				--animate number decrese
+				CreateBlast(event.x,event.y,mag,mag,-1)
+				setNrVacuums(nrVacums)
+			end
+		end
+	end
+end
+
+function HandleAsteroTap(e)
+	print("HandleAsteroTap:",e.phase)
+	if GameEndReason then
+		return true
+	end
+	if (e.phase == "began") then
+		BeginTouch(e)
+		lastTarget  = e.target;
+		print("Nr touches:",GetNRT())
+		if(levelData["player"]["joint"]) and GetNRT() == 1 then --only allow arrow dragging if the nr of fingers on the screen is 1
+			if( levelData[e.target.name]["bodyType"] == "dynamic" and levelData[e.target.name]["underTelekinesis"] == nil) then
+				AllowArrow = true
+				initialiseArrow(e)
+			end
+		end
+	end
+	if (e.phase == "moved")then --and lastTarget) then
+		MoveTouch(e)
+	end
+	if (e.phase == "ended") then
+		EndTouch(e)
+	end
+	return true -- unfortunately, this will not propogate down if false is returned
+end
+
+function HandleGeneralTouch(e)-- this function is messed up! Needs fixing
+	print("HandleGeneralTouch")
+	if (e.phase == "began") then
+		BeginTouch(e)
+	end
+	if (e.phase == "moved") then
+		MoveTouch(e)
+	end
+	if (e.phase == "ended") then
+		--impulse and tele
+		EndTouch(e)
+	end
+	return true
+end
+
+function ClearExitAnimation(e)
+	if e.phase == "ended" then
+		print("ENDED ANIMATION:",e.target.name)
+		local id = e.target.name
+		if levelData[id] then
+		if(levelData[id]["animations"]) then
+		levelData[id]["animations"][2]:pause()
+		levelData[id]["animations"][2].isVisible = false
+		levelData[id]["iamge"].isVisible = false
+		
+		--levelData[id]["animations"][2]:removeSelf()
+		--levelData[id]["animations"][2] = nil
+		--levelData[id]["animations"] = nil
+		--levelData[id]["image"]:removeSelf()
+		--levelData[id]["image"] = nil
+		--levelData[id] = nil
+		end
+		end
+		--levelData[id] = nil
+	end
+end
+
+function GravityCollision( self, event )
+	if( self.name == event.other.name or levelData[event.other.name]["gravityControl"] == nil) then
+		return
+	end
+	print("Gravimetric stuff!",self.name,event.other.name)
+	--if levelData[event.other.name]["bodyType"] and levelData[event.other.name]["bodyType"] == "dynamic" then 
+		if ( event.phase == "began" and levelData[event.other.name]["gravityControl"][self.name] == nil ) then
+			print("Setting up joint for gravity pull")
+			levelData[event.other.name]["gravityControl"][self.name] = 1
+		end
+		if ( event.phase == "ended" and levelData[event.other.name]["gravityControl"][self.name] ) then
+			if levelData[event.other.name]["gravityPulls"][self.name] then
+				levelData[event.other.name]["gravityPulls"][self.name]:removeSelf();
+				levelData[event.other.name]["gravityPulls"][self.name] = nil
+			end
+			levelData[event.other.name]["gravityControl"][self.name] = nil
+		end
+	--end
+end
+
+function DeleteJoint(left,id)
+	if levelData[left] then
+		if levelData[left]["jimages"] then
+			if levelData[left]["jimages"][id] then
+				levelData[left]["jimages"][id]:removeSelf()
+				levelData[left]["jimages"][id] = nil
+			end
+		end
+		if levelData[left]["joints"] then
+			if levelData[left]["joints"][id] then
+				levelData[left]["joints"][id][2]:removeSelf()
+				levelData[left]["joints"][id] = nil
+			end
+		end
+	end
+end
+
+function AttachFieldToEnemy(key)
+	levelData[key]["field"] = display.newImageRect("fld.png",levelData[key]["range"] * levelData[key]["image"].width,levelData[key]["range"] * levelData[key]["image"].width)
+	--display.newCircle( 0, 0, levelData[key]["range"] * levelData[key]["image"].width/2 )
+	levelData[key]["field"].alpha = 0.3
+	levelData[key]["field"].x = levelData[key]["image"].x
+	levelData[key]["field"].y = levelData[key]["image"].y
+	group:insert(levelData[key]["field"])
+end
+
+function GetImgRoot(img)
+	local pos = img:find(".png")
+	local ret = ""
+	local i = 1
+	while i<pos do
+		ret = ret..img:sub(i,i)
+		i = i+1
+	end
+	return ret
+end
+
+function AttemptToLoadAnimations(key,root)
+	if ENG_RLD ~= nil then
+		return
+	end
+	
+	local sheetParam = { width=levelData[key]["image"].width, height=levelData[key]["image"].height, numFrames=4, sheetContentWidth=levelData[key]["image"].width, sheetContentHeight=levelData[key]["image"].width*4 } 
+	local sequenceData = {name = "normalRun", start=1, count=4, time=400}
+	local teleSheet = graphics.newImageSheet(root.."action.png",SKIN_BASE_DIR, sheetParam )
+	if(teleSheet == nil)then
+		return
+	end
+	
+	levelData[key]["animations"] = {}
+	levelData[key]["animations"][1] = display.newSprite( teleSheet, sequenceData)
+	levelData[key]["animations"][1].isVisible = false
+	group:insert(levelData[key]["animations"][1])
+
+	teleSheet = graphics.newImageSheet( root.."move.png",SKIN_BASE_DIR, sheetParam )
+	if teleSheet == nil then
+		return
+	end
+	
+	levelData[key]["animations"][2] = display.newSprite( teleSheet, sequenceData)
+	levelData[key]["animations"][2].isVisible = false
+	group:insert(levelData[key]["animations"][2])
+	
+	teleSheet = graphics.newImageSheet( root.."static.png",SKIN_BASE_DIR, sheetParam )
+	if teleSheet == nil then
+		return
+	end
+	
+	levelData[key]["animations"][3] = display.newSprite( teleSheet, sequenceData)
+	levelData[key]["animations"][3].isVisible = false
+	group:insert(levelData[key]["animations"][3])
+	
+	levelData[key]["animationIndex"] = 0
+	levelData[key]["fallBackIndex"] = 1
+	print("Added Animations to",key)
+end
+
+function AddTrinket(key)
+	if ENG_RLD then
+		levelData[key]["image"].isVisible = true
+	else
+	local sheetParam = { width=80, height=80, numFrames=71, sheetContentWidth=2000, sheetContentHeight=240} 
+	local sequenceData = {name = "normalRun", start=1, count=71, time=1200,loopDirection = "forward"}
+	local teleSheet 
+	levelData[key]["animations"] = {}
+	levelData[key]["animationIndex"] = 0
+	print("adding trinket",key)
+	
+	levelData[key]["image"] = display.newRect(tonumber(levelData[key]["x"]),tonumber(levelData[key]["y"]),levelData[key]["width"],levelData[key]["height"])
+	levelData[key]["image"].x = levelData[key]["x"]
+	levelData[key]["image"].y = levelData[key]["y"]
+	levelData[key]["density"] = 0
+	physics.addBody( levelData[key]["image"], "static", { isSensor = true, radius = levelData[key]["image"].width/2 } )
+	group:insert(levelData[key]["image"])
+	
+	if key:find("star") then
+		sheetParam = { width=500, height=500, numFrames=4, sheetContentWidth=500, sheetContentHeight=2000} 
+		sequenceData = {name = "normalRun", start=1, count=4, time=500,loopDirection = "bounce"}
+		teleSheet = graphics.newImageSheet(SELECTED_SKIN_PACK.."star.png",SKIN_BASE_DIR , sheetParam )
+		levelData[key]["animations"][1] = display.newSprite( teleSheet, sequenceData)
+		levelData[key]["animations"][1].isVisible = false
+		
+		teleSheet = graphics.newImageSheet(SELECTED_SKIN_PACK.."star.png",SKIN_BASE_DIR , sheetParam )
+		sequenceData = {name = "normalRun", start=1, count=4, time=500,loopDirection = "forward", loopCount = 1}
+		levelData[key]["animations"][2] = display.newSprite( teleSheet, sequenceData)
+		levelData[key]["animations"][2].isVisible = false
+		print("added exit anim")
+	elseif key:find("flame") then
+		teleSheet = graphics.newImageSheet(SELECTED_SKIN_PACK.."star.png",SKIN_BASE_DIR , sheetParam )
+		levelData[key]["animations"][1] = display.newSprite( teleSheet, sequenceData)
+		levelData[key]["animations"][1].isVisible = false
+		
+		teleSheet = graphics.newImageSheet(SELECTED_SKIN_PACK.."star.png",SKIN_BASE_DIR , sheetParam )
+		sequenceData = {name = "normalRun", start=1, count=71, time=1200,loopDirection = "forward", loopCount = 1}
+		levelData[key]["animations"][2] = display.newSprite( teleSheet, sequenceData)
+		levelData[key]["animations"][2].isVisible = false
+	elseif key:find("vacuum") then
+		teleSheet = graphics.newImageSheet(SELECTED_SKIN_PACK.."star_old.png",SKIN_BASE_DIR , sheetParam )
+		levelData[key]["animations"][1] = display.newSprite( teleSheet, sequenceData)
+		levelData[key]["animations"][1].isVisible = false
+		
+		teleSheet = graphics.newImageSheet(SELECTED_SKIN_PACK.."star_old.png",SKIN_BASE_DIR , sheetParam )
+		sequenceData = {name = "normalRun", start=1, count=71, time=1200,loopDirection = "forward", loopCount = 1}
+		levelData[key]["animations"][2] = display.newSprite( teleSheet, sequenceData)
+		levelData[key]["animations"][2].isVisible = false
+	elseif key:find("gold") then
+		sheetParam = { width=500, height=500, numFrames=4, sheetContentWidth=500, sheetContentHeight=2000} 
+		sequenceData = {name = "normalRun", start=1, count=4, time=400,loopDirection = "forward"}
+		teleSheet = graphics.newImageSheet(SELECTED_SKIN_PACK.."coinAnimation.png",SKIN_BASE_DIR , sheetParam )
+		
+		levelData[key]["animations"][1] = display.newSprite( teleSheet, sequenceData)
+		levelData[key]["animations"][1].isVisible = false
+		
+		teleSheet = graphics.newImageSheet(SELECTED_SKIN_PACK.."coinAnimation.png",SKIN_BASE_DIR , sheetParam )
+		sequenceData = {name = "normalRun", start=1, count=4, time=400,loopDirection = "backward", loopCount = 1}
+		levelData[key]["animations"][2] = display.newSprite( teleSheet, sequenceData)
+		levelData[key]["animations"][2].isVisible = false
+	end
+	levelData[key]["animations"][1].name = key
+	levelData[key]["animations"][2].name = key
+	levelData[key]["image"].name = key
+	
+	levelData[key]["animations"][1].width  = levelData[key]["image"].width
+	levelData[key]["animations"][1].height = levelData[key]["image"].height
+	levelData[key]["animations"][2].width  = levelData[key]["image"].width
+	levelData[key]["animations"][2].height = levelData[key]["image"].height
+	
+	group:insert(levelData[key]["animations"][1])
+	group:insert(levelData[key]["animations"][2])
+	end
+	SwitchAnimation(key,1)
+end
+
+function RecalcBoundaries(key)
+	-------------------------------------------
+	--- calculate level boundaries
+	-------------------------------------------
+	if key ~= "player" then
+		if( levelData[key]["image"].x + levelData[key]["image"].width > maxX ) then
+			maxX = ( levelData[key]["image"].x + levelData[key]["image"].width )*1.2
+		end
+		if( levelData[key]["image"].x - levelData[key]["image"].width < minX ) then
+			minX = ( levelData[key]["image"].x - levelData[key]["image"].width )*1.2
+		end
+		if( levelData[key]["image"].y + levelData[key]["image"].height > maxY ) then
+			maxY = ( levelData[key]["image"].y + levelData[key]["image"].height )*1.2
+		end
+		if( levelData[key]["image"].y - levelData[key]["image"].height < minY ) then
+			minY = ( levelData[key]["image"].y - levelData[key]["image"].height )*1.2
+		end	
+	end
+	--print("maxx minx maxy miny",maxX,minX,maxY,minY)
+	-------------------------------------------
+	--- done setting level boundaries
+	-------------------------------------------	
+end
+
+function LoadLevel(reload)
+	print("ENG_RLD:",reload)
+	if (reload == nil) then
+		local path = system.pathForFile( CurrentLevel, system.ResourceDirectory )
+		if path == nil then
+			path = CurrentLevel
+		end
+		local levelF,reason = io.open(path,"r")
+		print("reading level:",CurrentLevel)
+		local nesting_level = 0
+		local createNew = false
+		local parents_list = {}
+		if levelF == nil then
+			return
+		end
+		for line in levelF:lines() do
+			line = line:gsub("^%s*(.-)%s*$", "%1")
+			line = line:gsub(" ","")
+			local c = line:sub(0,1)
+			if c == '#' then
+				print("#comment ignored")
+			else
+				if createNew then
+					parents_list[nesting_level] = line
+					nesting_level = nesting_level + 1
+					levelData[line] = {} -- created a new record
+					createNew = false
+				else
+					local splitPos = line:find('=')
+					if splitPos ~= nil then
+						--print(line,line:sub(0,splitPos-1),line:sub(splitPos+1,line:len()))
+						levelData[parents_list[nesting_level-1]][line:sub(0,splitPos-1)] = line:sub(splitPos+1,line:len()) 
+					end
+				end
+			
+				if c == '{' then -- got an object
+					createNew = true
+				end
+				if c == '}' then
+					nesting_level = nesting_level - 1
+					table.remove(parents_list, nesting_level);
+				end
+			end
+		end
+		io.close(levelF)
+	end
+	print("Setting up objects...")
+	levelData["player"]["attached"] = false
+	for key,value in pairs(levelData) do
+			print("Key:",key)
+		if key:find("Trinket") then
+			AddTrinket(key)
+		elseif levelData[key]["imgname"] then
+			levelData[key]["gravityControl"] = {}
+			levelData[key]["gravityPulls"] = {}
+			if(reload == nil or levelData[key]["image"] == nil) then
+				levelData[key]["image"] = display.newImageRect(SELECTED_SKIN_PACK..levelData[key]["imgname"],SKIN_BASE_DIR, tonumber(levelData[key]["width"]), tonumber(levelData[key]["height"]) )
+			end
+			levelData[key]["image"].isVisible = true;
+			levelData[key]["image"].width  = levelData[key]["width"]
+			levelData[key]["image"].height = levelData[key]["height"]
+			levelData[key]["image"].name = key
+			
+			levelData[key]["image"].x = tonumber(levelData[key]["x"])
+			levelData[key]["image"].y = tonumber(levelData[key]["y"])
+			levelData[key]["image"].rotation = tonumber(levelData[key]["rotation"])
+			levelData[key]["image"].root = true
+			group:insert(levelData[key]["image"])
+			RecalcBoundaries(key)
+			if(reload == nil) then
+				AttemptToLoadAnimations(key,SELECTED_SKIN_PACK..GetImgRoot(levelData[key]["imgname"]))
+			end
+			
+			if(levelData[key]["animations"])then
+				if(#levelData[key]["animations"]>=3)then
+					levelData[key]["image"].alpha = 0.0
+					SwitchAnimation(key,3)
+				end
+			end
+			--debug
+			if key:find("enemy") then
+				local hat = display.newImage("hat.png") -- debug
+				local props = { key = "hat",distance_rel = 1.2 , rotation_rel = -90, width_rel = 0.8, height_rel = 0.8, angle_rel = 1 } -- debug
+				addToOwned(key,hat,true,props) -- debug
+				group:insert(hat)
+			end
+			
+			local bodyType = "dynamic"
+			if levelData[key]["bodyType"] == nil then
+				levelData[key]["bodyType"] = bodyType
+			end
+			if levelData[key]["gravity"] and tonumber(levelData[key]["gravity"]) > 1 then --and levelData[key]["bodyType"] == "static" then
+				if(reload == nil or levelData[key]["field"] == nil ) then
+					levelData[key]["field"] = display.newImageRect( "fld.png",levelData[key]["gravity"] * levelData[key]["image"].width,levelData[key]["gravity"] * levelData[key]["image"].width)
+				end
+				--display.newCircle( 0, 0, levelData[key]["gravity"] * levelData[key]["image"].width/2 )
+				levelData[key]["field"].alpha = 0.3
+				levelData[key]["field"].name  = key
+				levelData[key]["field"].x = levelData[key]["image"].x
+				levelData[key]["field"].y = levelData[key]["image"].y
+				
+				levelData[key]["field"].width = levelData[key]["gravity"] * levelData[key]["image"].width;
+				levelData[key]["field"].height = levelData[key]["field"].width;
+				
+				physics.addBody( levelData[key]["field"], "static", { isSensor = true, radius = levelData[key]["gravity"] * levelData[key]["image"].width/2 } )
+					
+				levelData[key]["field"].collision = GravityCollision
+				levelData[key]["field"]:addEventListener("collision",levelData[key]["field"])
+				group:insert(levelData[key]["field"])
+			end
+			if key:find("enemy") then
+				if levelData[key]["actionType"] ~= "ever-charging" then
+					AttachFieldToEnemy(key)
+				end
+			end
+			if key:find("exit") then
+				levelData[key]["absorb"] = true
+			end
+			AddPhToBody(levelData[key])
+			if(levelData[key]["angleforce"] ~= nil) then
+				levelData[key]["image"]:applyTorque( tonumber(levelData[key]["angleforce"]) )
+			end
+			if key:find("ast") or key:find("boo") then
+				levelData[key]["image"]:addEventListener("touch",HandleAsteroTap)
+			end
+			--testing
+			--levelData[key]["image"].angularDamping = 5
+			--group:insert(levelData[key]["assets"])
+		end
+		--unpack the code
+		if key:find("timedOperation") then
+			print("codebit detected:")
+			local nr = 1
+			local code = {}
+			local nextSep = 0 
+			while levelData[key]["code"]:len() > 0 do
+				nextSep = levelData[key]["code"]:find(';')
+				code[nr] = levelData[key]["code"]:sub(0,nextSep-1)
+				levelData[key]["code"] = levelData[key]["code"]:sub(nextSep+1,levelData[key]["code"]:len())
+				print("insruction",nr,code[nr])
+				nr = nr + 1
+			end
+			instructions[key] = {}
+			instructions[key] = levelData[key]
+			instructions[key]["code"] = code
+			levelData[key] = nil
+			print("instr:",instructions[key]["code"][1])
+		end
+		--------------------------------------
+	end
+	--now create joints
+	if reload then --if reloading then override old joints
+		for key,value in pairs(levelData) do
+			levelData[key]["nrJoints"] = 0
+			levelData[key]["jointPnr"] = 0
+		end
+	end	
+	for key,value in pairs(levelData) do
+		if key:find("joint") then
+			if levelData[key]["left"] and levelData[key]["right"] and levelData[key]["type"] then
+				local left  = levelData[key]["left"]
+				local right = levelData[key]["right"]
+				if levelData[left]["joints"] == nil then
+					levelData[left]["nrJoints"]  = 0
+					levelData[left]["joints"]    = {}
+					levelData[left]["jointWith"] = {}
+				end
+				if levelData[right]["jointParents"] == nil then
+					levelData[right]["jointPnr"] = 0
+					levelData[right]["jointParents"] = {}
+				end
+				if levelData[left] and levelData[right] then
+					print("Joining objects:",left,right)
+					if levelData[key]["type"] == "elastic" then
+						print("elastic")
+						levelData[left]["nrJoints"] = levelData[left]["nrJoints"] + 1
+						if levelData[left]["joints"][levelData[left]["nrJoints"]][2] == nil then
+							levelData[left]["joints"][levelData[left]["nrJoints"]] = {levelData[key]["type"],physics.newJoint(levelData[key]["type"],levelData[left]["image"],levelData[right]["image"],levelData[left]["image"].x,levelData[left]["image"].y,levelData[right]["image"].x,levelData[right]["image"].y)}
+						end
+					elseif levelData[key]["type"] == "pivot" then
+						print("pivot")
+						levelData[left]["nrJoints"] = levelData[left]["nrJoints"] + 1
+						if levelData[left]["joints"][levelData[left]["nrJoints"]][2] == nil then
+							levelData[left]["joints"][levelData[left]["nrJoints"]] = {levelData[key]["type"],physics.newJoint(levelData[key]["type"],levelData[left]["image"],levelData[right]["image"],levelData[left]["image"].x,levelData[left]["image"].y)}
+						end
+					end
+					levelData[left]["jointWith"][levelData[left]["nrJoints"]] = right
+					levelData[right]["jointPnr"] = levelData[right]["jointPnr"] + 1
+					levelData[right]["jointParents"][levelData[right]["jointPnr"]] = {left,levelData[left]["nrJoints"]}
+					
+					UpdateJoint(left,levelData[left]["nrJoints"])
+				end
+			end
+			levelData[key] = nil
+		end
+	end
+	--attach the player to the starting obj
+	levelData["player"]["image"]:toFront()
+	if levelData["player"]["startObj"] then
+		AttachPlayer(levelData[levelData["player"]["startObj"]],true)
+	end
+	
+	CameraX = display.contentWidth/2;
+	CameraY = display.contentHeight/2;
+end
+
+function IsInsideAsteroid()
+	local bestD = display.contentWidth*display.contentHeight
+	local bestK = "ast0"
+	local px = levelData["player"]["image"].x
+	local py = levelData["player"]["image"].y
+	for key,value in pairs(levelData) do
+		if key:find("ast") and value["image"].isVisible then
+			local dist = math.sqrt((px-value["image"].x)^2 + (py-value["image"].y)^2)
+			if  bestD > dist then
+				bestK = key
+				bestD = dist
+			end
+		end
+	end
+	return levelData[bestK]
+end
+
+function ChemicalReaction(obj1,obj2)
+	if obj1["image"].name:find("ast") or obj1["image"].name:find("enemy") or obj1["image"].name:find("planet") or obj1["image"].name:find("sun") then
+		if obj2["image"].name:find("ast") or obj2["image"].name:find("enemy") or obj2["image"].name:find("planet") or obj2["image"].name:find("sun") then
+			local magnitude = 0 
+			if obj1["explosiveness"] then
+				magnitude = magnitude + obj1["explosiveness"]*obj1["image"].width 
+			end
+			if obj2["explosiveness"] then
+				magnitude = magnitude + obj2["explosiveness"]*obj2["image"].width
+			end
+			if magnitude == 0 then
+				return
+			end
+			local sign = magnitude
+			if( magnitude ~= 0) then
+				print("creating blast:mag::",magnitude);
+				if(magnitude<0) then
+					magnitude = -magnitude
+				end
+				local range = magnitude
+				local cx,cy = (obj1["image"].x+obj2["image"].x)/2,(obj1["image"].y+obj2["image"].y)/2;
+				print("Creating Blast");
+				if(obj1["image"].name:find("ast")) then
+					local resistance = obj1["image"].width*obj1["density"]/10;
+					print("Magnitude:",magnitude,"Resistance:",resistance,(1 - magnitude/resistance))
+					--if( resistance > magnitude ) then
+					--  RemoveOnce = true
+					--	zoomObject((1 - magnitude/resistance),obj1["image"].name,true)
+					--	reinstatePhBodies(obj1["image"].name)
+					--else					
+						obj1["toRemove"] = true
+					--end
+				end
+				if(obj2["image"].name:find("ast")) then
+					local resistance = obj2["image"].width*obj2["density"]/10;
+					print("Magnitude:",magnitude,"Resistance:",resistance,(1 - magnitude/resistance))
+					--if( resistance > magnitude ) then
+					--    RemoveOnce = true
+					--	zoomObject((1 - magnitude/resistance),obj2["image"].name,true)
+					--else					
+						obj2["toRemove"] = true
+					--end
+				end
+				if range < obj1["image"].width+obj2["image"].width then
+					range = obj1["image"].width+obj2["image"].width;
+				end
+				CreateBlast(cx,cy,magnitude,magnitude,sign)
+				
+			end
+		end
+	end
+end
+
+local FreeToAttach = false
+function PlayerCollision(event)
+	print("Player Collision,",event.phase)
+	if event.phase == "began" then
+	if levelData["player"]["deactivated"] then
+		return
+	end
+	if event.other.name == nil then
+		return
+	end
+	if event.other.name:find("ast") and event.other.root then
+		print("Player collision with astero:",event.other.name,"field",levelData[event.other.name]["field"])
+		vx,vy = levelData["player"]["image"]:getLinearVelocity()
+		levelData["player"]["impulseX"] = vx
+		levelData["player"]["impulseY"] = vy
+		levelData["player"]["image"]:setLinearVelocity(0,0)
+		levelData["player"]["joinTarget"] = event.other.name
+		print("CollisionTarget:",event.other.name)
+		DebugLabel.text = "Asteroid collision"
+		FreeToAttach = true
+	end
+	if event.other.name:find("enemy") then
+		levelData["player"]["image"]:setLinearVelocity(0,0)
+		print("GAME ENDED: LOOSE!")
+		if( GameEndReason == nil) then
+			Capturer = event.other.name
+			GameEndReason = "Got captured!"
+			--let the enter frame do the job
+		end
+	end
+	if event.other.name:find("planet") and event.other.root then
+		levelData["player"]["image"]:setLinearVelocity(0,0)
+		levelData["player"]["absorbBy"] = event.other.name 
+		if levelData["player"]["joint"] then
+			levelData["player"]["joint"]:removeSelf()
+			levelData["player"]["joint"] = nil
+		end
+		--GameEndReason = "Crashed!"
+	end
+	if event.other.name:find("sun") and event.other.root then
+		levelData["player"]["image"]:setLinearVelocity(0,0)
+		GameEndReason = "Crashed!"
+	end
+	if event.other.name:find("Trinket") then
+		print("TRINKET COLLISION:sensor:",event.other.name)
+		levelData[event.other.name]["animations"][1]:pause()
+		levelData[event.other.name]["animations"][2]:addEventListener("sprite",ClearExitAnimation)
+		print("Switching animation:",event.other.name)
+		SwitchAnimation(event.other.name,2)
+		print("Trinket collision exchange done")
+		if event.other.name:find("star") then
+			nrStars = nrStars+1
+			setNrStars(nrStars)
+			-- animate star add
+		end
+		if event.other.name:find("flame") then
+			nrFlames = nrFlames+1
+			setNrFlames(nrFlames)
+			-- animate flame add
+		end
+		if event.other.name:find("vacum") then
+			nrVacums = nrVacums+1
+			setNrVacuums(nrVacums)
+			-- animate vacum add
+		end
+		if event.other.name:find("gold") then
+			nrGold = nrGold + 1
+		end
+	end
+	end
+end
+
+function GeneralInteraction(event)
+	if levelData[event.object1.name]["underTelekinesis"] then
+		levelData[event.object1.name]["underTelekinesis"] = nil
+	end
+	if levelData[event.object2.name]["underTelekinesis"] then
+		levelData[event.object2.name]["underTelekinesis"] = nil
+	end
+	if levelData[event.object1.name]["absorb"] then
+		levelData[event.object2.name]["absorbBy"] = event.object1.name 
+		levelData[event.object2.name]["image"].isSensor = true
+		if(event.object2.name:find("enemy"))then
+			levelData[event.object2.name]["ALLdeactivated"] = true
+		end
+		if(event.object2.name == "player") then
+			if levelData["player"]["teleJoint"] then
+				TelekinesisUnHook()
+			end
+			if levelData["player"]["joint"] then
+				DetachPlayer()
+			end
+		end
+	end
+	if levelData[event.object2.name]["absorb"] then
+		levelData[event.object1.name]["absorbBy"] = event.object2.name 
+		levelData[event.object1.name]["image"].isSensor = true
+		if(event.object1.name:find("enemy"))then
+			levelData[event.object1.name]["ALLdeactivated"] = true
+		end
+		if(event.object1.name == "player") then
+			if levelData["player"]["teleJoint"] then
+				TelekinesisUnHook()
+			end
+			if levelData["player"]["joint"] then
+				DetachPlayer()
+			end
+		end
+	end
+	if event.object1.name:find("ast") or event.object2.name:find("ast") then
+		--two asteroids have collided
+		--calculate chemical reaction and do stuff
+		ChemicalReaction(levelData[event.object1.name],levelData[event.object2.name])
+		if event.object1.name:find("enemy") then
+			--print("Event.force",event.force);
+			DecreaseEnemyHealth(event.object1.name,event.force/10);
+		elseif event.object2.name:find("enemy") then
+			--print("Event.force",event.force);
+			DecreaseEnemyHealth(event.object2.name,event.force/10);
+		end
+	end
+	if event.object1.name:find("planet") and event.object2.name:find("enemy") then
+		levelData[event.object2.name]["image"]:setLinearVelocity(0,0)
+		levelData[event.object2.name]["absorbBy"] = event.object1.name 
+		--GameEndReason = "Crashed!"
+	end
+	if event.object2.name:find("planet") and event.object1.name:find("enemy") then
+		levelData[event.object1.name]["image"]:setLinearVelocity(0,0)
+		levelData[event.object1.name]["absorbBy"] = event.object2.name 
+		--GameEndReason = "Crashed!"
+	end
+end
+---------------provisional enter frame listener------------------------------------
+local lastx = 0
+local lasty = 0
+local deltax = 0
+local deltay = 0
+-- enemy action function
+function ActionEnemy(enemyID)
+	local angle = math.atan2( levelData["player"]["image"].y - levelData[enemyID]["image"].y, levelData["player"]["image"].x - levelData[enemyID]["image"].x )
+	local GoForce = levelData[enemyID]["GoForce"]
+	if GoForce ~= nil then
+		GoForce = GoForce * levelData[enemyID]["image"].width
+	end
+	local dist = math.sqrt((levelData[enemyID]["image"].x - levelData["player"]["image"].x)^2 + (levelData[enemyID]["image"].y - levelData["player"]["image"].y)^2) - levelData["player"]["image"].width/2
+	if levelData[enemyID]["actionType"] == "static" then
+		-- generate projectile or maybe not
+	elseif levelData[enemyID]["actionType"] == "dumb-charging" then
+		-- see if player is in range and charge straight ahead
+		if(dist <= levelData[enemyID]["range"]*levelData[enemyID]["image"].width/2) then
+			levelData[enemyID]["image"]:applyForce(GoForce*math.cos(angle),GoForce*math.sin(angle),levelData[enemyID]["image"].x,levelData[enemyID]["image"].y)
+			if levelData[enemyID]["field"] then
+				levelData[enemyID]["field"]:removeSelf()
+				levelData[enemyID]["field"] = nil
+			end
+			levelData[enemyID]["CODEdeactivated"] = true
+			SwitchAnimation(enemyID,2)
+		else
+			if levelData[enemyID]["field"] == nil then
+				AttachFieldToEnemy(enemyID)
+				levelData[enemyID]["image"]:setLinearVelocity( 0 , 0 )
+			end
+			levelData[enemyID]["CODEdeactivated"] = nil
+			SwitchAnimation(enemyID,3)
+		end
+	elseif levelData[enemyID]["actionType"] == "ever-charging" then
+		-- go towards player
+		SwitchAnimation(enemyID,2)
+		levelData[enemyID]["image"]:applyForce(GoForce*math.cos(angle),GoForce*math.sin(angle),levelData[enemyID]["image"].x,levelData[enemyID]["image"].y)
+	elseif levelData[enemyID]["actionType"] == "dragger" then
+		if(dist <= levelData[enemyID]["range"]*levelData[enemyID]["image"].width/2) then
+			if levelData["player"]["joint"] == nil and levelData["player"]["rotPace"] == nil then
+				EnemyHook(enemyID)
+			else
+				if levelData["player"]["enemyJoints"][enemyID] then
+					EnemyUnHook(enemyID,false)
+				end
+			end
+			levelData[enemyID]["CODEdeactivated"] = true
+		else
+			if levelData["player"]["enemyJoints"][enemyID] then
+				EnemyUnHook(enemyID,false)
+			end
+			levelData[enemyID]["CODEdeactivated"] = nil
+		end
+	end
+end
+
+function RemoveItem(key,complete)
+	-- all joints must be removed anyway
+	--remove out joints
+	print("deleting:",key)
+	if levelData[key]["joints"] then
+		for i = 1,#levelData[key]["joints"] do
+			DeleteJoint(key,i)
+		end
+		levelData[key]["nrJoints"] = nil
+		levelData[key]["joints"] = nil
+	end
+	--remove in joints
+	if levelData[key]["jointParents"] then
+		for i = 1,#levelData[key]["jointParents"] do
+			DeleteJoint(levelData[key]["jointParents"][i][1],levelData[key]["jointParents"][i][2])
+		end
+		levelData[key]["jointPnr"] = nil
+		levelData[key]["jointParents"] = nil
+	end
+	-- remove player joint
+	if(levelData[key]["joint"]) then
+		levelData[key]["joint"]:removeSelf()
+		levelData[key]["joint"] = nil
+	end
+	-- animations must only be removed if complete = true
+	if levelData[key]["animations"] then
+		for i =1,#levelData[key]["animations"] do
+			levelData[key]["animations"][i]:pause()
+			if complete then
+				levelData[key]["animations"][i]:removeSelf()
+				levelData[key]["animations"][i] = nil
+			else
+				levelData[key]["animations"][i].isVisible = false
+			end
+		end
+		if complete then
+			levelData[key]["animations"] = nil
+		end
+	end
+	-- removing player joint if asteroid gets sucked
+	if levelData["player"] then
+		if levelData["player"]["detached"] == false and levelData["player"]["joinWith"]["image"].name == key then
+			levelData["player"]["joint"]:removeSelf()
+			levelData["player"]["joint"] = nil
+		end
+	end
+	-- removing owned objects
+	if levelData[key]["owns"] then
+		for k,v in pairs(levelData[key]["owns"]) do
+			if v["image"] then
+				print("removed owned item from:",key)
+				if complete then
+					v["image"]:removeSelf()
+					v = nil
+				end
+					v["image"].isVisible = false
+				else
+			end
+		end
+	end
+	if complete then
+		print("Deleting image:",key)
+		levelData[key]["image"]:removeSelf()
+		levelData[key]["image"] = nil
+	else
+		levelData[key]["image"].isVisible = false
+	end
+	
+	if(levelData[key]["field"]) then
+		if complete then
+			levelData[key]["field"]:removeSelf()
+			levelData[key]["field"] = nil
+		else
+			levelData[key]["field"].isVisible = true
+		end
+	end
+	if complete then
+		levelData[key] = nil
+	end
+end
+
+function ExecuteCode(key)
+	--print("Executing code...")
+	if instructions[key] then
+			--made sure both objects exist
+			local cp = instructions[key]["codePointer"]
+			local jump = 0
+			local cindex = 1
+			local code = instructions[key]["code"][cp]:sub(0,instructions[key]["code"][cp]:len()) 
+			local allInstr = {}
+			local args = {}
+			local sep = 0
+			local isep = 0
+			while code:len() > 0 do
+				sep = code:find('>')
+				isep = code:find(',')
+				if isep == nil then
+					isep = code:len()
+				end
+				
+				if sep then
+					if sep <= isep then
+						args[#args+1] = code:sub(0,sep-1)
+						code = code:sub(sep+1,code:len())
+					else
+						args[#args+1] = code:sub(0,isep-1)
+						code = code:sub(isep+1,code:len())
+					end
+				else
+					if code:sub(isep,isep) == ";" or code:sub(isep,isep) == "," then --code:find(",") or code:find(";") then -- this may be optimized not to use find and use isep instead
+						args[#args+1] = code:sub(0,code:len()-1)
+					else
+						args[#args+1] = code:sub(0,code:len())
+					end
+					code = "";
+				end
+				print("instruction component:",args[#args])
+			
+				if sep == nil or sep > isep then
+					print("cindex",cindex,"alli",(#allInstr+1))
+					if cindex == (#allInstr+1) then
+						allInstr[cindex] = args
+						print("executing...")
+						local jump = Exec(args) -- args[1] = cmd / args[2 - ... ] the arguments
+						print("Jump:",jump)
+						cindex = cindex + jump
+						if jump >= 0 then
+							cindex = cindex + 1
+						end
+						args = {}
+						if cindex < 0 then
+							return
+						end
+					else
+						allInstr[#allInstr+1] = args
+						print("skipped...")
+					end
+				end
+			end
+		args = nil
+		allInstr = nil
+	end
+end
+
+function MaintainJoints(key)
+	for i = 1,#levelData[key]["joints"] do
+		if levelData[key]["jimages"][i] then
+			UpdateJoint(key,i)
+		end
+	end
+end
+
+function PauseAllAnimations()
+	print("Anim pause call")
+	levelData["player"]["animation"]:pause()
+	for i = 1,#levelData["player"]["Eanimations"] do
+		levelData["player"]["Eanimations"][i]:pause()
+	end
+	for key,val in pairs(levelData) do
+		if levelData[key]["animations"] then
+			for i = 1,#levelData[key]["animations"] do
+				levelData[key]["animations"][i]:pause()
+			end
+		end
+	end
+	for i = 1,#animations do
+		animations[i]["animation"]:pause()
+		print("Stopped anim:",i)
+	end
+end
+
+function ReStartAllAnimations()
+	levelData["player"]["animation"]:play()
+	for i = 1,#levelData["player"]["Eanimations"] do
+		levelData["player"]["Eanimations"][i]:play()
+	end
+	for key,val in pairs(levelData) do
+		if levelData[key]["animations"] then
+			for i = 1,#levelData[key]["animations"] do
+				levelData[key]["animations"][i]:play()
+			end
+		end
+	end
+	for i = 1,#animations do
+		animations[i]["animation"]:play()
+		print("Started anim:",i)
+	end
+end
+
+function ClearForZoom()
+	if levelData["player"]["joint"] then
+		levelData["player"]["joint"]:removeSelf();
+		levelData["player"]["joint"] = nil;
+	end
+	physics.pause()
+	PauseAllAnimations()
+end
+
+function RecoverAfterZoom()
+	ZoomRecover = false
+	physics.start()
+	ReStartAllAnimations()
+end
+
+-- testing performance
+-- adding an effect here
+local CBE = require("CBEffects.Library")
+local ParticleHelper = require("CBEffects.ParticleHelper")
+local fireComet = nil
+fireComet = CBE.NewVent{
+		title="Burn",
+		preset="burn",
+		color={{255, 111, 0}, {255, 70, 0}}, -- Reddish-orange colors
+		build=function()
+			local size=math.random(120, 140) -- Particles are a bit bigger than ice comet particles
+			return display.newImageRect("Textures/generic_particle.png", size, size)
+		end,
+		onCreation=function()end, -- See the note for the ice comet
+		perEmit=2,
+		positionType="inRadius",
+		posRadius=5,
+		emitDelay=10,
+		fadeInTime=500,
+		y=display.contentHeight,
+		x=display.contentWidth/2,
+		lifeSpan=500, -- Particles are removed sooner than the ice comet
+		lifeStart=500,
+		endAlpha=0,
+		physics={
+			sizeX=-0.01,
+			sizeY=-0.01,
+			autoAngle=false,
+			angles={90},
+			velocity=3,
+			xDamping=1,
+			gravityY=-0.01,
+			gravityX=0.01
+		}
+	}
+
+local once = false
+function frameEnter(event)
+	if fireComet then
+		if not once then
+			local props = { key = "fire"} -- debug
+			addToOwned("player",fireComet,true,props) -- debug
+			once = true
+		end
+		-- if TickCount % 20 == 0 then
+		-- 	fireComet:emit() -- debug
+		-- end
+	end
+	fps.tick()
+	--delete if working
+	-- zoom routine
+	if zoomAm ~= 1 and zoomAm then
+		-- camera rotation routine
+		if lastAngle == nil then
+			lastAngle = getTouchAngle()
+			angleDiff = 0
+		else
+			print("LAST ANGLE:",math.deg(lastAngle))
+			local angleNow = getTouchAngle()
+			if angleNow then
+				angleDiff = angleDiff + (angleNow - lastAngle)
+				rotateCamera((angleNow - lastAngle)*ROTATION_AMPLIFYER)
+			end
+			lastAngle = angleNow 
+		end
+		if amRotating == false then
+			lastZoomAm = zoomAm;
+			zoomCamera(1/zoomAm)
+			zoomAm = 1
+		end
+	end
+	TickCount = TickCount + 1
+	--check that player is within level boundaries
+	if levelData["player"] and levelData["player"].isVisible then
+		--print("Level boundaries: X-x, Y-y",maxX,minX,maxY,minY);
+		-- make sure it does not exit the game while camera is in another place on purpose
+		--print("Player pos:",levelData["player"]["image"].x,levelData["player"]["image"].y)
+		--if levelData["player"]["image"].x > display.contentWidth or levelData["player"]["image"].x < 0 or levelData["player"]["image"].y > display.contentHeight or levelData["player"]["image"].y < 0 then
+		--	GameEndReason = "Stranded in space!";
+		--end
+	end
+	----------------------------------------------
+	if GameEndReason then
+		print("Ending from Frame Enter")
+		EndGame()
+		return
+	end
+	if AllowArrow then
+		moveArrow(last_x,last_y)
+	end
+	if selector.isVisible then
+		selector:rotate(5)
+	end
+	if levelData["player"] == nil then
+		return
+	else
+		if levelData["player"]["rotPace"] and levelData["player"]["detached"] == false then
+			levelData["player"]["image"]:rotate(levelData["player"]["rotPace"])
+			levelData["player"]["image"].rotation = levelData["player"]["image"].rotation%360
+			if(math.abs(levelData["player"]["image"].rotation - math.deg(levelData["player"]["heading"])) <= 360/ROTATION_PACE) then
+				print("Welding player")
+				levelData["player"]["image"].rotation = math.deg(levelData["player"]["heading"])
+				levelData["player"]["rotPace"] = nil
+				--levelData["player"]["joint2"] = physics.newJoint( "pivot",levelData["player"]["joinWith"]["image"],levelData["player"]["image"], levelData["player"]["weldX"],levelData["player"]["weldY"] )
+			end
+		else
+			if(levelData["player"]["joinWith"] and levelData["player"]["joinWith"]["image"].isVisible )then
+				local angle = math.atan2(levelData["player"]["image"].y - levelData["player"]["joinWith"]["image"].y,levelData["player"]["image"].x - levelData["player"]["joinWith"]["image"].x)
+				levelData["player"]["image"].rotation = math.deg(angle)+90
+			end
+		end
+	end
+	if ZoomRecover then
+		RecoverAfterZoom()
+	end
+	if PushAway then
+		PushAway = false
+		print("Pushing player away form asteroid")
+		levelData["player"]["image"]:applyLinearImpulse( levelData["player"]["impulseX"], levelData["player"]["impulseY"], levelData["player"]["image"].x, levelData["player"]["image"].y )
+	end
+	if levelData["player"]["teleJoint"] then
+		if(amZooming == false and GameFrozen == false) then
+			levelData["player"]["teleJoint"]:setTarget( levelData["player"]["jointTarget"].x, levelData["player"]["jointTarget"].y )
+		end
+		--telekinesis animation
+		if(levelData["player"]["jointTarget"].x ) then
+		print("Reainstating telekinesis!")
+		local pjx = levelData["player"]["jointTarget"].x - levelData["player"]["image"].x
+		local pjy = levelData["player"]["jointTarget"].y - levelData["player"]["image"].y
+		local angle = math.atan2(pjy,pjx)
+		levelData["player"]["animation"].height = levelData["player"]["image"].width*0.35
+		levelData["player"]["animation"].width = math.sqrt(pjx^2 + pjy^2)
+		levelData["player"]["animation"].x = levelData["player"]["image"].x + pjx/2
+		levelData["player"]["animation"].y = levelData["player"]["image"].y + pjy/2
+		levelData["player"]["animation"].rotation = math.deg(angle)
+		end
+	end
+	-- maintain enemy hooks
+	for enemyID,val in pairs(levelData["player"]["enemyJoints"]) do
+		if levelData["player"]["enemyJoints"][enemyID] and levelData[enemyID] then
+			if(amZooming == false and GameFrozen == false) then
+				levelData["player"]["enemyJoints"][enemyID]:setTarget( levelData[enemyID]["image"].x, levelData[enemyID]["image"].y )
+			end
+			-- animation
+			local pjx = levelData[enemyID]["image"].x - levelData["player"]["image"].x
+			local pjy = levelData[enemyID]["image"].y - levelData["player"]["image"].y
+			local angle = math.atan2(pjy,pjx)
+			levelData["player"]["Eanimations"][enemyID].height = levelData["player"]["image"].width*0.35
+			levelData["player"]["Eanimations"][enemyID].width = math.sqrt(pjx^2 + pjy^2)
+			levelData["player"]["Eanimations"][enemyID].x = levelData["player"]["image"].x + pjx/2
+			levelData["player"]["Eanimations"][enemyID].y = levelData["player"]["image"].y + pjy/2
+			levelData["player"]["Eanimations"][enemyID].rotation = math.deg(angle)
+		end
+	end
+	if cameraReady then
+		local Dx = background.x - levelData["player"]["image"].x
+		local Dy = background.y - levelData["player"]["image"].y
+		local dist = math.sqrt(Dx^2+Dy^2)
+		moveCamera(Dx/10,Dy/10,true)
+		deltax = lastx - levelData["player"]["image"].x
+		deltay = lasty - levelData["player"]["image"].y
+		lastx = levelData["player"]["image"].x
+		lasty = levelData["player"]["image"].y
+	end
+	if(amZooming == false) then
+		--decor.animate()
+		if FreeToAttach then
+			FreeToAttach = false
+			local asteroid
+			if levelData["player"]["joinTarget"] == nil then
+				asteroid = IsInsideAsteroid()
+			else
+				asteroid = levelData[levelData["player"]["joinTarget"]]
+			end
+			if(asteroid)then
+				local isDistinct = true
+				if( levelData["player"]["joinWith"]["image"].isVisible ) then
+					print("attachign player:",levelData["player"]["joinWith"],levelData["player"]["joinWith"]["image"])
+					print("Identity check:",levelData["player"]["joinWith"]["image"].name , asteroid["image"].name)
+					if( levelData["player"]["joinWith"]["image"].name == asteroid["image"].name ) then
+						isDistinct = false
+					end
+				end
+				AttachPlayer(asteroid,true)
+				print("isDistinct:",isDistinct)
+				if isDistinct then
+					asteroid["image"]:applyLinearImpulse(levelData["player"]["impulseX"]/10,levelData["player"]["impulseY"]/10,asteroid["image"].x,asteroid["image"].y)
+				end
+			end
+		end
+		for key,value in pairs(instructions) do
+	
+			if (value["CODEdeactivated"] == nil and (value["nrExecutions"] == nil or tonumber(value["nrExecutions"]) ~= 0 )) then
+				if TickCount % tonumber(instructions[key]["period"]) == 0 then
+					if instructions[key]["codePointer"] == nil then
+						instructions[key]["codePointer"] = 1
+					end
+					ExecuteCode(key)
+					instructions[key]["codePointer"] = instructions[key]["codePointer"] + 1
+					if instructions[key]["codePointer"] > #instructions[key]["code"] then
+						instructions[key]["codePointer"] = 1
+					end
+				end
+				-- decrease the number of times this operation has to be performed
+				if value["nrExecutions"] then
+					if tonumber(value["nrExecutions"]) > 0 then
+						value["nrExecutions"] = tonumber(value["nrExecutions"]) - 1
+					end
+					-- optional
+					-- unload code when finished executing
+					if tonumber(value["nrExecutions"]) == 0 then
+						instructions[key] = nil
+					end
+				end
+			end
+		end
+	end
+	
+	for key,value in pairs(levelData) do
+		if value["image"].isVisible then
+		-- update any owned objects
+		if value["owns"] then
+			for k,v in pairs(levelData[key]["owns"]) do
+				if v["image"] and v["image"].isVisible then
+					--resize any owned objects
+					if v["width_rel"] then
+						v["image"].width = levelData[key]["image"].width * v["width_rel"]
+					end
+					if v["height_rel"] then
+						v["image"].height = levelData[key]["image"].height * v["height_rel"]
+					end
+					if v["distance_rel"] and v["rotation_rel"] then
+						local radius = (levelData[key]["image"].width/2)*v["distance_rel"]
+						v["image"].x = levelData[key]["image"].x + radius*math.cos(math.rad(levelData[key]["image"].rotation + v["rotation_rel"]))  
+						v["image"].y = levelData[key]["image"].y + radius*math.sin(math.rad(levelData[key]["image"].rotation + v["rotation_rel"]))
+					else
+						v["image"].x = levelData[key]["image"].x   
+						v["image"].y = levelData[key]["image"].y
+					end
+					if v["angle_rel"] then
+						v["image"].rotation = levelData[key]["image"].rotation * v["angle_rel"]
+					end
+						--enter mode
+					if v["entermode"] == "fade" then
+						if v["image"].alpha < v["fadeto"] then
+							if v["image"].alpha + v["faderate"] < v["fadeto"] then
+								v["image"].alpha = v["image"].alpha + v["faderate"]
+								print("Lowering alpha")
+							else
+								v["image"].alpha = v["fadeto"]
+							end
+						end
+						if v["image"].alpha == v["fadeto"] then
+							v["entermode"] = nil
+						end
+					end
+					--wait
+					if v["wait"] > 0 and v["entermode"] == nil then
+						v["wait"] = v["wait"] - 1
+					end
+					--exit mode
+					if v["wait"] == 0 then
+						if v["exitmode"] == "fade" then
+							if v["image"].alpha > 0 then
+								if v["image"].alpha - v["faderate"] > 0 then
+									v["image"].alpha = v["image"].alpha - v["faderate"]
+									print("Lowering alpha")
+								else
+									v["image"].alpha = 0
+								end
+								print("alpha:",v["image"].alpha,"higher:",(v["image"].alpha > 0))
+							end
+							if v["image"].alpha == 0 then
+								levelData[key]["owns"][k]["image"].isVisible = false
+								levelData[key]["owns"][k]["image"]:removeSelf()
+								levelData[key]["owns"][k]["image"] = nil
+								levelData[key]["owns"][k] = nil
+							end
+						end
+					end
+				end
+			end
+			-- delete images that are no longer visible
+			--[[for k,v in pairs(value["owns"]) do
+				if v["image"] and v["image"].isVisible == false then
+					levelData[key]["owns"][k]["image"]:removeSelf()
+					levelData[key]["owns"][k]["image"] = nil
+					levelData[key]["owns"][k] = nil
+				end
+			end]]--
+		end
+		-- update game shapes
+		if levelData[key]["image"] then
+			-- summon periodic animtions
+			if levelData[key]["periodicAnimation"] and levelData[key]["allowAnim"] then
+				if( TickCount%levelData[key]["periodicAnimation"]["period"] == 0 ) then
+					SwitchAnimation(key,levelData[key]["periodicAnimation"]["jumpTo"])
+					if(levelData[key]["periodicAnimation"]["randomize"])then
+						local rand =  math.floor(math.random() * levelData[key]["periodicAnimation"]["randomize"])
+						if(rand>0)then
+							levelData[key]["periodicAnimation"]["period"] = rand
+						end
+					end
+				end
+			end
+			-- maintain animations
+			if levelData[key]["animations"] then
+				if levelData[key]["animationIndex"] ~= 0 then
+					levelData[key]["animations"][levelData[key]["animationIndex"]].x = levelData[key]["image"].x
+					levelData[key]["animations"][levelData[key]["animationIndex"]].y = levelData[key]["image"].y
+					levelData[key]["animations"][levelData[key]["animationIndex"]].width = levelData[key]["image"].width
+					levelData[key]["animations"][levelData[key]["animationIndex"]].height = levelData[key]["image"].height
+					levelData[key]["animations"][levelData[key]["animationIndex"]].rotation = levelData[key]["image"].rotation
+				end
+			end
+			-- maintain joints
+			if levelData[key]["joints"] then
+				MaintainJoints(key)
+			end
+			--relocate field if necessary
+			if levelData[key]["field"] then
+				if(levelData[key]["field"].x ~= levelData[key]["image"].x) then
+					levelData[key]["field"].x = levelData[key]["image"].x
+				end
+				if(levelData[key]["field"].y ~= levelData[key]["image"].y) then 
+					levelData[key]["field"].y = levelData[key]["image"].y
+				end
+			end
+			if amZooming == false then
+				--check who gets drawn into gravity
+				if levelData[key]["gravityControl"] then
+					for Gparent,val in pairs(levelData[key]["gravityControl"]) do
+						--print("GPARENT:",Gparent," val:",levelData[key]["gravityControl"][Gparent])
+						if(levelData[Gparent] and levelData[Gparent]["image"]) then
+							if levelData[key]["gravityControl"][Gparent] == 1 then
+								levelData[key]["gravityControl"][Gparent] = 2
+								print("Creating gravity pull")
+								levelData[key]["gravityPulls"][Gparent] = physics.newJoint( "touch", levelData[key]["image"], levelData[key]["image"].x, levelData[key]["image"].y )
+								local force = 1 
+								if(levelData[Gparent]["gravityForce"]) then
+									force = levelData[Gparent]["gravityForce"]
+								end
+								levelData[key]["gravityPulls"][Gparent].maxForce = force * levelData[Gparent]["image"].width 
+								levelData[key]["gravityPulls"][Gparent].frequency = 0.3
+								levelData[key]["gravityPulls"][Gparent].dampingRatio = 0.0
+							end
+							if levelData[key]["gravityControl"][Gparent] == 2 then
+								--print("Grav pul on",key)
+								levelData[key]["gravityPulls"][Gparent]:setTarget( levelData[Gparent]["image"].x, levelData[Gparent]["image"].y )
+							end
+						else
+							levelData[key]["gravityControl"][Gparent] = nil
+							levelData[key]["gravityPulls"][Gparent] = nil
+						end
+					end
+				end
+				--check if any forces must be applied
+				if levelData[key]["force_angle"] and levelData[key]["force_times"] then
+					if tonumber(levelData[key]["force_times"]) ~= 0 then
+						local force
+						if tonumber(levelData[key]["force_times"]) > 0 then
+							levelData[key]["force_times"] = levelData[key]["force_times"] - 1
+						end
+						if levelData[key]["force"] and tonumber(levelData[key]["force"]) > 0 then
+							force = levelData[key]["force"]*levelData[key]["image"].width
+							levelData[key]["image"]:applyForce(force*math.cos(math.rad(levelData[key]["force_angle"])),force*math.sin(math.rad(levelData[key]["force_angle"])),levelData[key]["image"].x,levelData[key]["image"].y)
+						end
+						if levelData[key]["impulse"] and tonumber(levelData[key]["impulse"]) > 0 then
+							force = levelData[key]["impulse"]*levelData[key]["image"].width
+							levelData[key]["image"]:applyLinearImpulse(force*math.cos(math.rad(levelData[key]["force_angle"])),force*math.sin(math.rad(levelData[key]["force_angle"])),levelData[key]["image"].x,levelData[key]["image"].y)
+						end
+						-- adjust angle of force for the next appliance so that the movement is orbital
+						-- must have force_orbital set to true to make orbital force
+						if levelData[key]["force_orbital"]~= nil and (levelData[key]["joints"] or levelData[key]["jointParents"]) then
+							local vx,vy = levelData[key]["image"]:getLinearVelocity()
+							if vx~= 0 and vy~=0 then
+								levelData[key]["force_angle"] = math.deg(math.atan2(vy,vx))
+							end
+						end
+					end
+				end
+				--Action each enemy
+				if key:find("enemy") and levelData[key]["Alldeactivated"] == nil and levelData["player"] then
+					ActionEnemy(key)
+				end
+				-- check absorbing
+				if levelData[key]["absorbBy"] then
+					local absorbCoef = 5
+					local dampCoef = 0.96
+					
+					if(levelData[key]["absorbBy"]:find("planet"))then
+						absorbCoef = 1;
+						--dampCoef = 0.08
+					end
+					
+					levelData[key]["image"]:setLinearVelocity(0,0)
+					levelData[key]["deactivated"] = true
+					local difx = levelData[key]["image"].x - levelData[levelData[key]["absorbBy"]]["image"].x
+					local dify = levelData[key]["image"].y - levelData[levelData[key]["absorbBy"]]["image"].y
+					local angle = math.atan2(dify,difx)
+					local angle = angle + math.rad(absorbCoef)
+					local radius = math.sqrt(difx^2 + dify^2)
+					local oldWidth = levelData[key]["image"].width
+					levelData[key]["image"].width = levelData[key]["image"].width * dampCoef
+					levelData[key]["image"].height = levelData[key]["image"].height * dampCoef
+				    radius = (radius * levelData[key]["image"].width)/oldWidth
+					if(levelData[key]["absorbBy"]:find("planet"))then
+						radius = (levelData[key]["image"].width+levelData[levelData[key]["absorbBy"]]["image"].width)/2*dampCoef
+					end
+					levelData[key]["image"].x = levelData[levelData[key]["absorbBy"]]["image"].x + radius * math.cos(angle)
+					levelData[key]["image"].y = levelData[levelData[key]["absorbBy"]]["image"].y + radius * math.sin(angle)
+					if( levelData[key]["image"].width < 2 or levelData[key]["image"].height < 2 ) then
+						if key == "player" then
+							if levelData[key]["absorbBy"]:find("exit") then
+								GameEndReason = "Finished!" 
+							else
+								if levelData[key]["absorbBy"]:find("planet") then
+									GameEndReason = "Crashed!";
+								else
+									GameEndReason = "Absorbed into nothingness!"
+								end
+							end
+							print("Absorbtion ended the game!")
+							EndGame()
+							return
+						else
+							print("removing absorbed item")
+							RemoveItem(key,false)
+						end
+					end
+				end
+				-- check who gets deleted !!! KEEP THIS THE LAST IF IN THE FOR OTHERWISE PROBLEMS ARISE IF OBJECT IS DELETED AND ATTEMPTS TO ACCES IT ARE MADE AFTERWARDS
+				if levelData[key] then
+					if levelData[key]["toRemove"] then
+						print("REMV:",levelData["player"]["joinWith"], levelData[key])
+						if( levelData["player"]["detached"] == false and levelData["player"]["joinWith"] == levelData[key] ) then
+							DetachPlayer()
+						end
+						RemoveItem(key,false)
+					end
+				end
+			end
+		end
+		end
+	end
+end
+
+function UnFreezeGame()
+	if GameFrozen then
+		print("Unfreezing Game")
+		physics.start()
+		background:addEventListener( "touch", HandleGeneralTouch )
+		Runtime:addEventListener("postCollision", GeneralInteraction)
+		GameFrozen = false
+		ReStartAllAnimations()
+	end
+end
+
+function FreezeGame()
+	if not GameFrozen then
+		print("Freezing Game!")
+		physics.pause()
+		background:removeEventListener("touch", HandleGeneralTouch )
+		Runtime:removeEventListener("postCollision", GeneralInteraction)
+		PauseAllAnimations()
+		GameFrozen = true
+	end
+end
+
+function ClearListeners()
+	levelData["player"]["image"]:removeEventListener("collision",PlayerCollision)
+	for key,value in pairs(levelData) do
+		if levelData[key]["field"] then
+			levelData[key]["field"]:removeEventListener("collision",levelData[key]["field"])
+		end
+		if key:find("ast") or key:find("boo") then
+			levelData[key]["image"]:removeEventListener("touch",HandleAsteroTap)
+		end
+	end
+end
+-- Called when the scene's view does not exist:
+function onBackBtnPress()
+	GameEndReason = "quit"
+	--UnFreezeGame()
+	EndGame()
+	return true
+end
+
+function onPlayBtnPress()
+	UnFreezeGame()
+	TriggerPauseMenu()
+	return true
+end
+
+function onRetryBtnPress()
+	GameEndReason = "retry"
+	--UnFreezeGame()
+	EndGame()
+	return true
+end
+
+function CreatePauseMenu()
+	local sizeCoef = 0.15
+	local backButton = widget.newButton{
+		defaultFile="backButton.png",
+		overFile="backButtonOver.png",
+		width = display.contentWidth*sizeCoef, height = display.contentWidth*sizeCoef,
+		onRelease = onBackBtnPress	-- event listener function
+	}
+	local playButton = widget.newButton{
+		defaultFile="playButton.png",
+		overFile="playButtonOver.png",
+		width = display.contentWidth*sizeCoef, height = display.contentWidth*sizeCoef,
+		onRelease = onPlayBtnPress	-- event listener function
+	}
+	local retryButton = widget.newButton{
+		defaultFile = "retryButton.png",
+		overFile = "retryButtonOver.png",
+		width = playButton.width,
+		height = playButton.height,
+		onRelease = onRetryBtnPress,
+	}
+	
+	playButton.x = display.contentWidth/2
+	playButton.y = display.contentHeight/2
+	
+	retryButton.x = playButton.x+playButton.width+retryButton.width/2
+	retryButton.y = playButton.y
+	
+	backButton.x = playButton.x - playButton.width - backButton.width/2
+	backButton.y = playButton.y
+	
+	pauseMenu:insert(backButton)
+	pauseMenu:insert(retryButton)
+	pauseMenu:insert(playButton)
+	pauseMenu.isVisible = false
+	group:insert(pauseMenu)
+end
+
+local function setupScene()
+	nrStars  = 0
+	nrFlames = 0
+	nrVacums = 0
+	nrGold = 0
+
+	local sizeCoef = 0.1
+	print("creating scene")
+	GameEndReason = nil
+	if ENG_RLD == nil then
+		group:insert(background)
+	end
+	local model = math.random()*10000%4;
+	model = math.floor(model)
+	if (model == 0) then
+		model = 1
+	end
+	--debug
+	model = 2;
+	print("MODEL:",model);
+	--decor.initDecorator( group, {filename = "nebula"..model..".jpg",{r = 255, g = 0, b = 0, alpha = 0.4}} )
+	Runtime:addEventListener("enterFrame",frameEnter);
+	if ENG_RLD == nil then
+		group:insert(rect)
+		group:insert(arrow)
+	end
+	LoadLevel(ENG_RLD);
+	
+	lastx = levelData["player"]["image"].x
+	lasty = levelData["player"]["image"].y
+	levelData["player"]["image"]:addEventListener("collision",PlayerCollision)
+	if ENG_RLD == nil then
+		-- setup the player animation for the telekinesis rope
+		local sheetParam = { width=1024, height=64, numFrames=8, sheetContentWidth=1024, sheetContentHeight=512 } 
+		local sequenceData = {name = "normalRun", start=1, count=8, time=800}
+		local teleSheet = graphics.newImageSheet(SELECTED_SKIN_PACK.."telelink.png",SKIN_BASE_DIR, sheetParam )
+		levelData["player"]["animation"] = display.newSprite( teleSheet, sequenceData)
+		levelData["player"]["animation"].isVisible = false
+		levelData["player"]["animations"] = {}
+	end
+	-- load enemy animations
+	levelData["player"]["enemyJoints"] = {}
+	if ENG_RLD == nil then
+		levelData["player"]["Eanimations"] = {}
+		for key,value in pairs(levelData) do
+			if(key:find("enemy") and levelData[key]["actionType"] == "dragger") then -- for all tele draggers add animation
+			local EsheetParam = { width=1024, height=64, numFrames=8, sheetContentWidth=1024, sheetContentHeight=512 } 
+			local EsequenceData = {name = "normalRun", start=1, count=8, time=800}
+			local esheet = graphics.newImageSheet(SELECTED_SKIN_PACK.."telelink.png",SKIN_BASE_DIR, EsheetParam )
+			levelData["player"]["Eanimations"][key] = display.newSprite( esheet , EsequenceData)
+			levelData["player"]["Eanimations"][key].isVisible = false
+			group:insert(levelData["player"]["Eanimations"][key])
+			end
+		end
+		group:insert(levelData["player"]["animation"])
+	end
+	if ENG_RLD == nil then
+		--debug
+		DebugLabel = display.newText("Debug",0,0,native.systemFont,30)
+		DebugLabel:setTextColor(255,255,255)
+		DebugLabel.x = display.contentWidth/2
+		DebugLabel.y = display.contentHeight/2
+		group:insert(DebugLabel)
+	end
+	-- do this smartly
+	for key,val in pairs(levelData) do
+		if levelData[key]["image"] then
+			levelData[key]["image"]:toFront()
+		end
+	end
+	
+	for key,val in pairs(levelData) do
+		if key:find("tutorial") and levelData[key]["image"] then
+			levelData[key]["image"]:toFront()
+		end
+	end
+	
+	levelData["player"]["image"]:toFront()
+	levelData["player"]["image"].alpah = 0
+	levelData["player"]["fallBackIdx"] = 1
+	levelData["player"]["animationIndex"] = 0
+	if ENG_RLD == nil then
+		sheetParam = { width=107, height=127, numFrames=1, sheetContentWidth=107, sheetContentHeight=127} 
+		sequenceData = {name = "normalRun", start=1, count=1, time=200,loopDirection = "forward"}
+		teleSheet = graphics.newImageSheet(SELECTED_SKIN_PACK.."player.png",SKIN_BASE_DIR , sheetParam )
+		levelData["player"]["animations"][1] = display.newSprite( teleSheet, sequenceData)
+		levelData["player"]["animations"][1].isVisible = false
+		levelData["player"]["animations"][1].name = "player"
+		
+		sheetParam = { width=107, height=127, numFrames=4, sheetContentWidth=107, sheetContentHeight=509} 
+		sequenceData = {name = "normalRun", start=1, count=4, time=200,loopCount = 3}
+		teleSheet = graphics.newImageSheet(SELECTED_SKIN_PACK.."PlayerStandingTele.png",SKIN_BASE_DIR , sheetParam )
+		levelData["player"]["animations"][2] = display.newSprite( teleSheet, sequenceData)
+		levelData["player"]["animations"][2].isVisible = false
+		levelData["player"]["animations"][2]:addEventListener("sprite",SwitchAnimBack)
+		levelData["player"]["animations"][2].name = "player"
+		
+		sheetParam = { width=107, height=127, numFrames=4, sheetContentWidth=107, sheetContentHeight=509} 
+		sequenceData = {name = "normalRun", start=1, count=4, time=200}
+		teleSheet = graphics.newImageSheet(SELECTED_SKIN_PACK.."PlayerStandingTele.png",SKIN_BASE_DIR , sheetParam )
+		levelData["player"]["animations"][3] = display.newSprite( teleSheet, sequenceData)
+		levelData["player"]["animations"][3].isVisible = false
+		levelData["player"]["animations"][3]:addEventListener("sprite",SwitchAnimBack)
+		levelData["player"]["animations"][3].name = "player"
+		
+		sheetParam = { width=107, height=127, numFrames=4, sheetContentWidth=107, sheetContentHeight=509} 
+		sequenceData = {name = "normalRun", start=1, count=4, time=200}
+		teleSheet = graphics.newImageSheet(SELECTED_SKIN_PACK.."PlayerFlyAnimation.png",SKIN_BASE_DIR , sheetParam )
+		levelData["player"]["animations"][4] = display.newSprite( teleSheet, sequenceData)
+		levelData["player"]["animations"][4].isVisible = false
+		levelData["player"]["animations"][4]:addEventListener("sprite",SwitchAnimBack)
+		levelData["player"]["animations"][4].name = "player"
+		
+		sheetParam = { width=107, height=127, numFrames=4, sheetContentWidth=107, sheetContentHeight=509} 
+		sequenceData = {name = "normalRun", start=1, count=4, time=200,loopDirection = "bounce",loopCount = 1}
+		teleSheet = graphics.newImageSheet(SELECTED_SKIN_PACK.."PlayerStandingAnimation.png",SKIN_BASE_DIR , sheetParam )
+		levelData["player"]["animations"][5] = display.newSprite( teleSheet, sequenceData )
+		levelData["player"]["animations"][5].isVisible = false
+		levelData["player"]["animations"][5].name = "player"
+		levelData["player"]["animations"][5]:addEventListener("sprite",SwitchAnimBack)
+		
+		levelData["player"]["periodicAnimation"] = {}
+		levelData["player"]["periodicAnimation"]["period"] = 120
+		levelData["player"]["periodicAnimation"]["randomize"] = 120
+		levelData["player"]["periodicAnimation"]["jumpTo"] = 5
+		
+		--ending animations
+		levelData["player"]["end_anim"] = {}	
+		sheetParam = { width=250, height=128, numFrames=12, sheetContentWidth=768, sheetContentHeight=512 } 
+		sequenceData = {name = "normalRun", start=1, count=12, time=300,loopCount = 1}
+		local mds = graphics.newImageSheet(SELECTED_SKIN_PACK.."magicDust.png",SKIN_BASE_DIR, sheetParam )
+		levelData["player"]["end_anim"]["magicDust"] = display.newSprite( mds, sequenceData)
+		levelData["player"]["end_anim"]["magicDust"].isVisible = false
+		levelData["player"]["end_anim"]["magicDust"].name = "player"
+		
+		sheetParam = { width=50, height=50, numFrames=4, sheetContentWidth=50, sheetContentHeight=50*4 }
+		sequenceData = {name = "normalRun", start=1, count=4, time=100,loopCount = 1}
+		local mdd= graphics.newImageSheet(SELECTED_SKIN_PACK.."crushedAnimation.png",SKIN_BASE_DIR, sheetParam )
+		levelData["player"]["end_anim"]["crash"] = display.newSprite( mdd, sequenceData)
+		levelData["player"]["end_anim"]["crash"].isVisible = false
+		levelData["player"]["end_anim"]["crash"]:addEventListener("sprite",SwitchAnimBack)
+		levelData["player"]["end_anim"]["crash"].name = "player"
+		
+		group:insert(levelData["player"]["animations"][1])
+		group:insert(levelData["player"]["animations"][2])
+		group:insert(levelData["player"]["animations"][3])
+		group:insert(levelData["player"]["animations"][4])
+		group:insert(levelData["player"]["animations"][5])
+	
+		CreatePauseMenu()
+	end
+	SwitchAnimation("player",1)
+	cameraReady = true
+	-- debug
+	levelData["starTrinket1"] = {}
+	levelData["starTrinket1"]["x"] = display.contentWidth/10
+	levelData["starTrinket1"]["y"] = display.contentWidth/2
+	levelData["starTrinket1"]["width"] = 50
+	levelData["starTrinket1"]["height"] = 50
+	
+	levelData["goldTrinket1"] = {}
+	levelData["goldTrinket1"]["x"] = display.contentWidth/2
+	levelData["goldTrinket1"]["y"] = display.contentWidth/2
+	levelData["goldTrinket1"]["width"] = 50
+	levelData["goldTrinket1"]["height"] = 50
+	
+	levelData["vacuumTrinket1"] = {}
+	levelData["vacuumTrinket1"]["x"] = display.contentWidth/4
+	levelData["vacuumTrinket1"]["y"] = display.contentWidth/4
+	levelData["vacuumTrinket1"]["width"] = 50
+	levelData["vacuumTrinket1"]["height"] = 50
+	
+	AddTrinket("starTrinket1")
+	AddTrinket("goldTrinket1")
+	AddTrinket("vacuumTrinket1")
+	createStatusBar(true)
+	
+	nrFlames = 999 --debug
+	nrVacums = 999 --debug
+	nrGold = 9999   --debug
+	setNrVacuums(nrVacums) -- debug
+	setNrFlames(nrFlames) -- debug
+	setNrGold(nrGold) -- debug
+	local hat = display.newImage("hat.png") -- debug
+	local props = { key = "hat",distance_rel = 1.2 , rotation_rel = -90, width_rel = 0.8, height_rel = 0.8, angle_rel = 1 } -- debug
+	addToOwned("player",hat,true,props) -- debug
+	group:insert(hat)
+	
+	--local mus = display.newImage("moustache.png") -- debug
+	--local ratio = mus.height/mus.width 
+	--local props2 = { key = "moustache",distance_rel = -0.3 , rotation_rel = -90, width_rel = 0.4, height_rel = 0.4*ratio, angle_rel = 1 } -- debug
+	--addToOwned("player",mus,true,props2) -- debug
+	if ENG_RLD == nil then
+		group:insert(levelData["player"]["end_anim"]["magicDust"])
+		group:insert(levelData["player"]["end_anim"]["crash"])
+	end
+	
+	if(levelData["player"]["image"].width/display.contentWidth > PLAYER_SIZE_COEFF )then
+		zoomCamera(levelData["player"]["image"].width/display.contentWidth - PLAYER_SIZE_COEFF)
+	end
+	
+end
+
+function scene:createScene( event )
+	group = self.view
+	showLoad.init()
+	showLoad.trigger(display.contentWidth/2,display.contentHeight/2)
+end
+
+-- Called immediately after scene has moved onscreen:
+function scene:enterScene( event )
+	setupScene()
+	local sizeCoef = 0.1
+	showLoad.clear()
+	pauseBtn = widget.newButton{
+		defaultFile="pauseButton.png",
+		overFile="pauseButton.png",
+		width = display.contentWidth*sizeCoef, height = display.contentWidth*sizeCoef,
+		onRelease = TriggerPauseMenu	-- event listener function
+	}
+	pauseBtn.x = pauseBtn.width/2
+	pauseBtn.y = display.contentHeight - pauseBtn.width/2
+	group:insert(pauseBtn)
+	UnFreezeGame()
+	Runtime:addEventListener("enterFrame",frameEnter)
+	physics.start()
+end
+
+-- Called when scene is about to move offscreen:
+function scene:exitScene( event )
+	ENG_RLD = true;
+end
+-- If scene's view is removed, scene:destroyScene() will be called just prior to:
+function scene:destroyScene( event )
+	ENG_RLD = nil;
+	pauseBtn:removeEventListener("tap",backToMenu)
+	Runtime:removeEventListener("enterFrame",frameEnter)
+	print("Destroying scene")
+	package.loaded[physics] = nil
+	physics = nil
+	for k,v in pairs(levelData) do
+		print("destroyer called")
+		RemoveItem(k,true)
+		v = nil
+	end
+	levelData = nil
+	--warning only lave this scene after it has been removed
+	--decor.clean()
+	--storyboard.gotoScene(GoToWhatScene,"fade",fdspd)
+end
+
+function MakeVariable(scope,name)
+	local base = nil
+	local token
+	print("attempting to create variable",name,"at scope",scope)
+	while scope:len() > 0 do
+		local final = true
+		local pos = scope:len()
+		for i =1,scope:len() do
+			if scope:sub(i,i) == "." then
+				final = false
+				pos = i
+				break
+			end
+		end
+		if final then
+			pos = pos + 1
+		end
+		token = scope:sub(0,pos-1)
+		scope = scope:sub(pos+1,scope:len())
+		print("token",token)
+		if base ~= nil then
+			print ("not null base",base[token])
+			if base[token] == nil then
+				print("nesting token:",token)
+				base[token] = {}
+			end
+			if not final then
+				base = base[token]
+			else
+				break;
+			end
+		end
+		if base == nil then
+			print("looking for scope:",token,"len",token:len())
+			base = levelData[token]
+			if base == nil then
+				print("could not find scope:",token,levelData[token])
+				--base[token] = {}
+				return false
+			end
+		end
+	end
+	
+	if base[token] == nil then
+		print("nesting token:",token)
+		base[token] = {}
+	end		
+	if base[token][name] == nil then
+		base[token][name] = "0"
+		print("Creating variable",name,"at key",token,base[token],base[token][name])
+	end
+	return true;
+end
+
+function AccessVariable(path)
+	if path:sub(1,1) == '"' then --this is a literal
+		return {value = path:sub(2,path:len()-1)},"value"
+	else
+		local nester = nil
+		local depth = 0;
+		while path:len() > 0 do
+			local final = true
+			local pos = path:len()
+			for i =1,path:len() do
+				if path:sub(i,i) == "." then
+					final = false
+					pos = i
+					break
+				end
+			end
+			if final then
+				pos = pos + 1
+			end
+			local token = path:sub(0,pos-1)
+			path = path:sub(pos+1,path:len())
+			if depth == 0 then
+				if final then
+					return levelData,token;
+				end
+				nester = levelData[token]
+			else
+				--print("reiterate:",path)
+				if final then
+					--print("Returning at this point:",nester,token,nester[token])
+					return nester,token;
+				else
+					nester = nester[token]
+				end
+			end
+			if nester == nil then
+				return nil;
+			end
+			depth = depth + 1
+		end
+	end
+end
+
+function Exec(args) -- refactor to accomodate acces to any variable
+	if args[1] == "def" and #args==3 then -- not working
+		--           scope  / variable name
+		MakeVariable(args[2],args[3])
+	end
+	if args[1] == "set" and #args==3 then -- checked
+		local pointer,k = AccessVariable(args[2])
+		if pointer and k then
+			pointer[k] = args[3]
+		end
+	end
+	if args[1] == "add" and #args==4 then -- checked 
+		local ptr1,k1 = AccessVariable(args[2])
+		local ptr2,k2 = AccessVariable(args[3])
+		local ptr3,k3 = AccessVariable(args[4])
+		if ptr1 == nil or ptr2 == nil or ptr3 == nil or ptr1[k1] == nil or ptr2[k2] == nil or ptr3[k3] == nil then
+			print("add ACCESS ERROR:",ptr1,k1,ptr2,k3,ptr3,k3)
+			return 0
+		end
+		ptr1[k1] = tonumber(ptr2[k2]) + tonumber(ptr3[k3])
+	end
+	if args[1] == "sub" and #args==4 then -- checked
+		local ptr1,k1 = AccessVariable(args[2])
+		local ptr2,k2 = AccessVariable(args[3])
+		local ptr3,k3 = AccessVariable(args[4])
+		if ptr1 == nil or ptr2 == nil or ptr3 == nil or ptr1[k1] == nil or ptr2[k2] == nil or ptr3[k3] == nil then
+			print("sub ACCESS ERROR:",ptr1,k1,ptr2,k3,ptr3,k3)
+			print("sub:",ptr1[k1],ptr2[k2],ptr3[k3])
+			return 0
+		end
+		print("sub:",ptr1[k1],ptr2[k2],ptr3[k3])
+		ptr1[k1] = tonumber(ptr2[k2]) - tonumber(ptr3[k3])
+	end
+	if args[1] == "mul" and #args==4 then -- checked
+		local ptr1,k1 = AccessVariable(args[2])
+		local ptr2,k2 = AccessVariable(args[3])
+		local ptr3,k3 = AccessVariable(args[4])
+		if ptr1 == nil or ptr2 == nil or ptr3 == nil or ptr1[k1] == nil or ptr2[k2] == nil or ptr3[k3] == nil then
+			print("mul ACCESS ERROR:",ptr1,k1,ptr2,k3,ptr3,k3)
+			print("sub:",ptr1[k1],ptr2[k2],ptr3[k3])
+			return 0
+		end
+		ptr1[k1] = tonumber(ptr2[k2]) * tonumber(ptr3[k3])
+	end
+	if args[1] == "div" and #args==4 then -- checked
+		local ptr1,k1 = AccessVariable(args[2])
+		local ptr2,k2 = AccessVariable(args[3])
+		local ptr3,k3 = AccessVariable(args[4])
+		if ptr1 == nil or ptr2 == nil or ptr3 == nil or ptr1[k1] == nil or ptr2[k2] == nil or ptr3[k3] == nil then
+			print("div ACCESS ERROR:",ptr1,k1,ptr2,k3,ptr3,k3)
+			return 0
+		end
+
+		if ptr3[k3] ~= 0 then
+			ptr1[k1] = tonumber(ptr2[k2]) / tonumber(ptr3[k3])
+		else
+			print("Exec error:DIVISION BY ZERO!")
+		end
+	end
+	if args[1] == "mod" and #args==4 then -- checked 
+		local ptr1,k1 = AccessVariable(args[2])
+		local ptr2,k2 = AccessVariable(args[3])
+		local ptr3,k3 = AccessVariable(args[4])
+		if ptr1 == nil or ptr2 == nil or ptr3 == nil or ptr1[k1] == nil or ptr2[k2] == nil or ptr3[k3] == nil then
+			print("mod ACCESS ERROR:",ptr1[k1],ptr2[k2],ptr3[k3])
+			return 0
+		end
+		ptr1[k1] = tonumber(ptr2[k2]) % tonumber(ptr3[k3])
+	end
+	if args[1] == "pwr" and #args==4 then -- checked
+		local ptr1,k1 = AccessVariable(args[2])
+		local ptr2,k2 = AccessVariable(args[3])
+		local ptr3,k3 = AccessVariable(args[4])
+		if ptr1 == nil or ptr2 == nil or ptr3 == nil or ptr1[k1] == nil or ptr2[k2] == nil or ptr3[k3] == nil then
+			print("pwr ACCESS ERROR:",ptr1[k1],ptr2[k2],ptr3[k3])
+			return 0
+		end
+		ptr1[k1] = tonumber(ptr2[k2]) ^ tonumber(ptr3[k3])
+	end
+	if args[1] == "sqrt" and #args==3 then -- dubious behaviour, todo fix
+		local ptr1,k1 = AccessVariable(args[2])
+		local ptr2,k2 = AccessVariable(args[3])
+		if ptr1 == nil or ptr2 == nil or ptr1[k1] == nil or ptr2[k2] == nil then
+			print("sqrt ACCESS ERROR:",ptr1[k1],ptr2[k2])
+			return 0
+		end
+		if tonumber(ptr2[k2]) < 0 then
+			return 0
+		end
+		ptr1[k1] = math.sqrt(tonumber(ptr2[k2]))
+	end
+	-- complex instructions ( almost like CISC )
+	if args[1] == "SetVelocity" and #args==4 then -- checked SetVelocity / target / vx / vy
+		local ptr1,k1 = AccessVariable(args[2])
+		local ptr2,k2 = AccessVariable(args[3])
+		local ptr3,k3 = AccessVariable(args[4])
+		if ptr1 == nil or ptr2 == nil or ptr3 == nil or ptr1[k1] == nil or ptr2[k2] == nil or ptr3[k3] == nil then
+			print("SetVelocity ACCESS ERROR:",ptr1,ptr2,ptr3)
+			return 0
+		end
+		ptr1[k1]["image"]:setLinearVelocity(tonumber(ptr2[k2]),tonumber(ptr3[k3]))
+	end
+	if args[1] == "followPlayer" then -- checked followPlayer / force / list of followers
+		local force,kf = AccessVariable(args[2])
+		for i = 3,#args do
+			local ptr,k = AccessVariable(args[i])
+			local angle = math.atan2(levelData["player"]["image"].y-ptr[k]["image"].y,levelData["player"]["image"].x-ptr[k]["image"].x)  
+			local FRS = ptr[k]["image"].width * force[kf]
+			print("following player",force[kf])
+			ptr[k]["image"]:applyForce(force[kf]*math.cos(angle),force[kf]*math.sin(angle),ptr[k]["image"].x,ptr[k]["image"].y)
+		end
+	end
+	--more operations to come
+	--essential flow control instructions
+	if args[1] == "isGreater" and #args==4 then
+		local ptr1,k1 = AccessVariable(args[2]);
+		local ptr2,k2 = AccessVariable(args[3]);
+		local ptr3,k3 = AccessVariable(args[4]);
+		if ptr1 == nil or ptr2 == nil or ptr3 == nil or ptr1[k1] == nil or ptr2[k2] == nil or ptr3[k3] == nil then
+			print("isGreater ACCESS ERROR:",ptr1,ptr2,ptr3)
+			return 0
+		end
+		ptr1[k1] = (tonumber(ptr2[k2]) > tonumber(ptr3[k3]))
+		print("is",tonumber(ptr2[k2]),"greater than",tonumber(ptr3[k3]),":",ptr1[k1])
+	end
+	if args[1] == "isSmaller" and #args==4 then
+		local ptr1,k1 = AccessVariable(args[2]);
+		local ptr2,k2 = AccessVariable(args[3]);
+		local ptr3,k3 = AccessVariable(args[4]);
+		if ptr1 == nil or ptr2 == nil or ptr3 == nil or ptr1[k1] == nil or ptr2[k2] == nil or ptr3[k3] == nil then
+			print("isSmaller ACCESS ERROR:",ptr1,ptr2,ptr3)
+			return 0
+		end
+		ptr1[k1] = (tonumber(ptr2[k2]) < tonumber(ptr3[k3]))
+	end
+	if args[1] == "isEqual" and #args==4 then
+		local ptr1,k1 = AccessVariable(args[2]);
+		local ptr2,k2 = AccessVariable(args[3]);
+		local ptr3,k3 = AccessVariable(args[4]);
+		if ptr1 == nil or ptr2 == nil or ptr3 == nil or ptr1[k1] == nil or ptr2[k2] == nil or ptr3[k3] == nil then
+			print("isEqual ACCESS ERROR:",ptr1,ptr2,ptr3)
+			return 0
+		end
+		ptr1[k1] = (ptr2[k2] == ptr3[k3])
+	end
+	if args[1] == "not" and #args==3 then -- checked
+		local ptr1,k1 = AccessVariable(args[2]);
+		local ptr2,k2 = AccessVariable(args[3]);
+		if ptr1 == nil or ptr2 == nil or ptr1[k1] == nil or ptr2[k2] == nil then
+			print("not ACCESS ERROR:",ptr1,ptr2)
+			return 0
+		end
+		if type(ptr2[k2]) ~= "boolean" then
+			print("ERROR:Can't invert a non boolean data type")
+			return 0
+		end
+		ptr1[k1] = not ptr2[k2] 
+	end
+	if args[1] == "and" and #args==4 then
+		local ptr1,k1 = AccessVariable(args[2]);
+		local ptr2,k2 = AccessVariable(args[3]);
+		local ptr3,k3 = AccessVariable(args[4]);
+		if ptr1 == nil or ptr2 == nil or ptr3 == nil or ptr1[k1] == nil or ptr2[k2] == nil or ptr3[k3] == nil then
+			print("and ACCESS ERROR:",ptr1,ptr2,ptr3)
+			return 0
+		end
+		ptr1[k1] = (tonumber(ptr2[k2]) and tonumber(ptr3[k3]))
+	end
+	if args[1] == "or" and #args==4 then
+		local ptr1,k1 = AccessVariable(args[2]);
+		local ptr2,k2 = AccessVariable(args[3]);
+		local ptr3,k3 = AccessVariable(args[4]);
+		if ptr1 == nil or ptr2 == nil or ptr3 == nil or ptr1[k1] == nil or ptr2[k2] == nil or ptr3[k3] == nil then
+			print("or ACCESS ERROR:",ptr1,ptr2,ptr3)
+			return 0
+		end
+		ptr1[k1] = (tonumber(ptr2[k2]) and tonumber(ptr3[k3]))
+	end
+	if args[1] == "jumpTrue" and #args==3 then
+		local check,k = AccessVariable(args[2]);
+		print("jumpt",check,k,check[k])
+		if check and k and type (check[k]) == "boolean" and check[k] == true  then
+			local val,key = AccessVariable(args[3]);
+			if key and val and val[key] then
+				return tonumber(val[key]);
+			end
+		end
+	end
+	if args[1] == "jumpFalse" and #args==3 then -- checked
+		local check,k = AccessVariable(args[2]);
+		if check and k and type (check[k]) == "boolean" and check[k] == false then
+			local val,key = AccessVariable(args[3]);
+			if key and val and val[key] then
+				print("jump am",val[key]);
+				return tonumber(val[key]);
+			end
+		end
+	end
+	return 0;
+end
+
+-----------------------------------------------------------------------------------------
+-- END OF YOUR IMPLEMENTATION
+-----------------------------------------------------------------------------------------
+-- "createScene" event is dispatched if scene's view does not exist
+scene:addEventListener( "createScene", scene )
+-- "enterScene" event is dispatched whenever scene transition has finished
+scene:addEventListener( "enterScene", scene )
+-- "exitScene" event is dispatched whenever before next scene's transition begins
+scene:addEventListener( "exitScene", scene )
+-- "destroyScene" event is dispatched before view is unloaded, which can be
+-- automatically unloaded in low memory situations, or explicitly via a call to
+-- storyboard.purgeScene() or storyboard.removeScene().
+scene:addEventListener( "destroyScene", scene )
+-----------------------------------------------------------------------------------------
+return scene

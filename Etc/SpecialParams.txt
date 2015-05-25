@@ -1,0 +1,12 @@
+--------------------------------------------------------------------------------
+CBEffects Deprecated, Removed, or Problem Parameters
+--------------------------------------------------------------------------------
+
+rotation
+	Type: Melded into main table
+
+physics.density
+	Type: Removed
+
+physics.relativeToSize
+	Type: Removed

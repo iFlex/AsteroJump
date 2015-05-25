@@ -1,0 +1,228 @@
+////////////////////// This file describes what types of objects the game supports
+////////////////////// and what the requirements are to successfully create those objects
+
+1. The player:
+	Must be named player
+	example:
+			{
+				player
+				x = 260
+				y = 600
+				width    = 100
+				height   = 100
+				radius   = 50
+				rotation = 0
+				#physical properties
+				density  = 0.1
+				friction = 0.5
+				bounce   = 1.0
+				gravity  = 0
+				#image
+				imgname    = formimages/player.png 
+				startObj = ast1
+			}
+			
+2. Asteroids
+	2.1 Simple Asteroids
+		example:
+				{
+				ast1
+				x = 160
+				y = 600
+				width    = 100
+				height   = 100
+				radius   = 50
+				rotation = 0
+				#physical properties
+				gravity  = 0
+				angleforce = 40
+				density  = 70.0
+				friction = 0.0
+				bounce   = 1.0
+				imgname = formimages/rock1.png 
+				#chemical properties
+				explosiveness = 0
+				acidness = 0
+				}
+				
+	2.2 Asteroids with Gravity Fields
+		Must be STATIC as bodyType
+		Must have gravity set ( gravity is a percentage of the object's dimensions)
+		The field can also repell by setting a negative gravityForce
+		example:
+			{
+				...
+				bodyType = static
+				gravity = 1.5   
+			}
+
+3. Sucking Vortexes
+	MUST HAVE absorb = true
+	Must have a gravity FIELD
+	Must be STATIC as bodyType
+	Must not be named "ast"
+	example:
+		{
+			vortex1
+			...
+			absorb = true
+			gravity = 4
+			bodyType = static
+		}
+		
+4. The exit
+	Must be named exit
+	Must have a Gravity FIELD
+	Must have a STATIC bodyType
+	example:
+		{
+			exit
+			gravity = 4
+			bodyType = static
+			...
+		}
+		
+5. Enemies
+	5.1 Range triggered eney
+		Must have GoForce set ( it is a percentage of the object's dimensions ) 
+		Must have range set ( is is a percengate of the object's dimensions )
+		Must have actionType set to dump-charging ( dumb-charging or ever-charging or shooting )
+		
+		example:
+		{
+			enemy0
+			GoForce=1
+			range=5
+			friction=0.2
+			radius=70.5
+			gravity=0
+			density=0.2
+			x=580
+			y=290
+			width=141
+			height=141
+			rotation=0
+			imgname=formimages/enemy1.png
+			explosiveness=0
+			acidness=0
+			actionType=dumb-charging
+			bounce=0.15
+			angleforce=0
+			}
+	5.2 Ever chasing enemy
+		just like above enemy just that 
+		Must have actionType set to ever-charging ( dumb-charging or ever-charging or shooting )
+		{
+			enemy0
+			actionType = ever-charging
+			GoForce=1
+			range=5
+			...
+		}
+	5.3 Static telekinetic enemy ( not supported yet)
+		just like above only that
+		Must have actionType set to shooting ( dumb-charging or ever-charging or shooting )
+		{
+			enemy0
+			actionType = dragging
+			range=5
+			...
+		}
+		and some additional configuring needed to describe the projectiles
+		not supported yet
+	5.4 Ever charging booey
+		a simple object that named boo
+		{
+			boo1
+			...
+		}
+		with a script that tells it to follow the player
+		{
+			timedOperation
+			target = boo1
+			period = 1
+			code = followPlayer>>1.0; # 1.0 is the speed of the follower (1.0 * image.width)
+		}
+	
+6. Applying forces to objects ( can be applied to any type of object so be careful! )
+	6.1 Simple force
+		Must have force_angle set (0 - 360)
+			The force_angle is related to the object's angle ( so if the object turns the force angle turns )
+		Must have force set ( it is a percentage representing force amplitude in relation to object width)
+		{
+			ast1
+			force_angle = 0
+			force = 2.5   // the force will be = ast1.width*2.5
+		}
+	6.2 Orbital forces ( forces that adjust themselves to make the object orbitate another object )
+		Must have a joint with another object ( thie current object must be the child of the joint relation )
+		Must have force_angle and force set
+		Must have force_orbital set to true
+		{
+			ast1
+			force_angle = 0
+			force = 2.5   // the force will be = ast1.width*2.5	
+			force_orbital = true	
+		}
+7. Joints between objects
+	Any 2 objects can be joined so choose carefully
+	
+	sintax:
+	{
+		joint1
+		left  = id1
+		right = id2
+		type  = elastic|pivot
+	}
+
+8. Timed operations ( used to periodically perform operations like change direction of a moving rock, etc )
+	sintax:
+	{
+		timedOperation1
+		period =        ( how often in relation to the frame rate does the code run )
+		nrExecutions    ( how many times to run this code: -1 all the time  > 0 for a number of times	
+		period = 10     ( at what frame interval will the action be performed )
+		code   = command1,command2,command3,etc ( a sequence of operations performed on the properties of ast0 )
+		# sintax for commands in the code section below
+	}
+		
+	code sintax: [operation]>[variable]>[variable]>[variable] separator , and ;
+	, separates individual instructions ( all instructions in an instruction block will be executed at one trigger)
+	; separates instruction blocks ( a instruction block will be executed periodically )
+	
+	the properties of the displayObject are already existing variables
+	
+	VARIABLES:   this.is.an.example  => levelData["this"]["is"]["an"]["example"] //this way any variable or property can be accessed
+	Literals:    "this is a literal" => this is a literal	
+ 	# DON'T FORGET TO PUT ANY LITERAL IN QUOTES
+	available operations:
+		
+		-- essential flow control / evaluation and variable definition instructions
+		#not workin ATM#def       > variable_parent > variable_name;  define a variable (var_parent must be one of the game displayObjects or a code defined variable )
+		set       > destination > value ;
+		
+		isGreater > result > cmp1 > cmp2 ;
+		isSmaller > result > cmp1 > cmp2 ;
+		isEqual   > result > cmp1 > cmp2 ;
+		
+		not       > result > cmp1 > cmp2 ;
+		and       > result > cmp1 > cmp2 ;
+		or        > result > cmp1 > cmp2 ;
+		xor       > result > cmp1 > cmp2 ; //not implemented yet
+		
+		jumpTrue  > test   > jump_amount ; //if test is true then program skips the next jump_amount instructions from the same block
+		jumpFalse > test   > jump_amount ; //if test is false then program skips the next jump_amount instructions from the same block
+		
+		-- operations
+		add > destination > source1 > source2 ;     destination = source1 + source2
+		sub > destination > source1 > source2 ;     destination = source1 - source2
+		mult > destination > source1 > source2;     destination = source1 * source2
+		div > destination > source1 > source2 ;     destination = source1 / source2
+		mod > destination > source1 > source2 ;     destination = source1 % source2
+		pwr > destination > source1 > source2 ;     destination = source1 ^ source2
+		sqrt > destination > source1 >        ;     destination = sqrt(source1) 
+		SetVelocity > object_name > vx > vy   ;     set linear velocity of object_name to vx and vy                
+		
+		followPlayer > force > follower1 > follower 2 > ... ; 
+		#more operations will be added on the way
+		

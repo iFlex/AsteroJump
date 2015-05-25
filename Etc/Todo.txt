@@ -1,0 +1,8 @@
+--------------------------------------------------------------------------------
+CBEffects Todo
+--------------------------------------------------------------------------------
+
+Just a miscellaneous list of minor things yet to be done. If you're looking for something to contribute, fell free to work on anything you find in here.
+
+- Update the Lua files to use more whitespace ("a=b" turns into "a = b", or "1+2/(3*99)" turns into "1 + 2 / (3 * 99)"
+- Update the dummy vent/field creation functions to support the new capability for NewVent and NewField

@@ -1,0 +1,286 @@
+--------------------------------------------------------------------------------
+CBEffects Changelog
+--------------------------------------------------------------------------------
+
+Note: Prior to 2.0, a naming convention was used that was not very efficient or easy to use. With 2.0, a new format was introduced, and with it, previous names were changed. Here are the previous names and the new ones.
+
+Old                   || New
+----------------------||-------
+One                   || 1.0.0
+One and One-Fourth    || 1.0.1
+One and One-Half      || 1.1.0
+One and Three-Fourths || 1.1.1
+One and Four-Fifths   || 1.1.2
+Two										|| 1.2.0
+Two and One-Fourth    || 1.2.1
+Two and Two-Fifths    || 1.2.2
+Two and Four-Ninths   || 1.2.3
+
+New Naming Convention Format: version.release.revision(-sub revision, if any)
+
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+CBEffects 1.0.0
+Date Released: November 30, 2012
+(initial release)
+
+CHANGES/UPDATES
+	- Initial Release
+
+ANNOUNCEMENTS
+(none)
+
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+CBEffects 1.0.1
+Date released: December 12, 2012
+
+
+CHANGES/UPDATES
+	- Added "scale" parameter
+	- Added this document
+
+ANNOUNCEMENTS
+(none)
+
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+CBEffects 1.1.0
+Date Released: December 15, 2012
+
+
+CHANGES/UPDATES
+	-Added the FieldGroup function
+		- Point collision detection
+		- Added collision fields
+		- Added the ParticleCollisions file
+		- Added the collision field presets "default", "out", and "colorChange"
+	- Added a color changing function to each particle
+	- Added the vent preset "confetti"
+	- Added the vent preset "snow"
+	- Added the "atPoint" position type
+	- Added the color change ability for particles
+
+- Changed the ".new" function to ".VentGroup"
+- Re-wrote the CBReadme
+
+- Fixed a bug where it would throw an error with the velFunction
+- Fixed a problem where the "alongLine" position type's path was not getting changed by the scale parameter
+
+ANNOUNCEMENTS
+(none)
+
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+CBEffects 1.1.1
+Date Released: December 20, 2012
+
+
+CHANGES/UPDATES
+	- Added the vent preset "beams"
+	- Added the "kill" function for particles
+	- Added the "Light and Confetti" sample
+
+ANNOUNCEMENTS
+(none)
+
+
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+CBEffects 1.1.2
+Date Released: December 21, 2012
+
+
+CHANGES/UPDATES
+	-Added the vent preset "burn"
+	-Added the "parentGroup" parameter
+	-Added the "Burn to Touch" sample
+	-Added the "Swapping Colors" sample
+	-Added the "xDamping" and "yDamping" parameters
+	-Fixed a problem with positioning fields
+	-Moved the textures to their own folder
+	-Edited the "sparks" preset
+
+ANNOUNCEMENTS
+(none)
+
+
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+CBEffects 1.2.0
+	Date Released: January 29, 2013
+	
+
+	CHANGES/UPDATES
+		- Added the passing of the vent's "content" group in the onCreation, onUpdate, and onDeath functions
+		- Added the vent's "content" group
+		- Added the "parentGroup" parameter
+		- Added the "preCalculate" parameter
+		- Added the "relativeToSize" parameter
+		- Added the "onUpdate" parameter
+		- Added the "contentX" and "contentY" parameters
+		- Added the "iterateColor" parameter
+		- Added the "curColor" parameter
+		- Added the "iteratePoint" parameter
+		- Added the "curPoint" parameter
+		- Added the "lineDensity" parameter
+		- Added the "pointList" parameter
+
+		- Added the "lasergun" vent preset
+		- Added the "wisps" vent preset
+		- Added the "fluid" vent preset
+		- Added the "water" vent preset
+		- Added the "rotate" field preset
+		- Added the "stop" field preset
+
+		- Added the "DemoPreset" function
+
+		- Various core updates
+		- Memory usage cut down some
+		- Edited some particle textures
+		- Edited the "pixelwheel" preset
+
+		- Fixed a bug where the "towardVel" parameter sometimes generated an error
+
+		- Removed the file "ParticleHelper.lua"
+		- Removed the file "ParticleCollisions".lua
+		- Removed textures 6-8
+		- Removed the horrifically long line to transfer all of the values to the vent
+
+	ANNOUNCEMENTS
+		Manual -
+			You'll have to just deal without a manual for now - CBResources should be out in a bit.
+		CBCondensed -
+			CBCondensed will be published, perhaps two or three updates later. It is a single-file version of CBEffects. It is very slim - only one CBCondensed.lua file, but you don't get any presets with it. So if you're the kind of person who likes to nest files, and doesn't mind if you have no presets, then CBCondensed is for you.
+		CBText - 
+			Coming up!
+
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+CBEffects 1.2.1
+Date Released: February 25, 2013
+
+
+CHANGES/UPDATES
+	- Added the "aurora" preset
+	- Added the "hasColor" parameter
+	- Added the "iterateAngle" parameter
+	- Added the "curAngle" parameter
+	- Added the "divisionDamping" parameter
+	- Upgraded ParticleHelper's physics class to use less computing power
+
+	- Fixed a bug with the fromPointList iteratePoint value
+
+	- Removed the file "ParticlePhysics.lua", replaced by "ParticleHelper.lua"
+	- Removed the file "ParticlePresets.lua", replaced by "ParticleHelper.lua"
+
+ANNOUNCEMENTS
+	CBResources -
+		CBResources is still coming - it's not dead! Apologies for the references in this file to it.
+
+
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+CBEffects 1.2.2
+Date Released: March 7, 2013
+
+
+CHANGES/UPDATES
+	-Added the "Render" CBEffects method
+	-Added the "DeleteAll" CBEffects method
+
+	-Fixed multiple memory leaks
+		- Major memory leak with destroying VentGroups: Entire EnterFrame listener not removed and 0.2 Mb of not-freed system memory
+		- Minor memory leak with the ParticlePhysics class
+		- Minor memory leak with cleaning particles from a VentGroup
+
+
+ANNOUNCEMENTS
+(none)
+
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+CBEffects 1.2.3
+Date Released: April 16, 2013
+
+CHANGES/UPDATES
+	- Fixed problem with sizeX and sizeY
+
+
+ANNOUNCEMENTS
+(none)
+
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+CBEffects 2.0.0
+Date Released: Aug 17, 2013
+
+
+CHANGES/UPDATES:
+	Fixed bugs/issues -
+		- Fixed issue with hasColor parameter doing nothing
+		- Fixed issue with onDeath firing even when cleaning particles
+		- Fixed random error bug when destroying VentGroups
+	New Library Methods -
+		- Added "NewVent"
+		- Added "VentX"
+	Presets -
+		- Updated Pixelwheel preset
+		- Updated Smoke preset
+		- Added Jitter preset
+	Miscellaneous -
+		- Updated the CBReference (finally!)
+		- Added ParticlePhysics.setScale() method
+		- Added color support for line particles
+		- Added delta time calculation to look perfect across all FPS settings and handle lag; no more 60 FPS/30 FPS clashes
+		- Created new version notation for readability and updates
+		- Removed CBEffects folder icon; looked lovely but was taking up 151 Kb of storage space - almost half the entire library size
+	Parameters -
+		- rotation/towardVel is now rotateTowardVel
+		- rotation/offset is now towardVelOffset
+		- Removed physics/relativeToSize
+		- Removed physics/density
+		- Removed rotation
+		- Added physics/scale
+		- Added physics/angleIncr
+		- Added colorIncr
+		- Added pointIncr
+		- Added offsetAlongLine
+		- Added onVentInit
+		- Added onFieldInit
+	Improved security against reference accidents -
+		- ParticleHelper uses better particle access method
+		- Underscored (_*) CBEffects internal particle values
+		- Moved ParticlePhysics parameters to underscored table
+	Speed and memory improvement -
+		- Improved FieldGroup update speed
+		- Updated table creations for vents, ParticlePhysics objects, and others to be built with values inside (adding values that aren't already existent makes Lua rehash each time which can take a lot of time)
+		- ParticlePhysics uses a single EnterFrame listener
+		- ParticlePhysics internally converts division into multiplication for faster updates
+	Greatly improved readability -
+		- Cleaned up this document (CBInfo)
+		- Alphabetized presets
+		- ParticlePhysics uses a clamp function instead of value comparisons
+		- Cleaned up emit function
+		- Cleaned up ParticleHelper functions
+		- Condensed functions for "hidden" render type to a single (long) line
+		- Renamed "field" inside FieldGroup function to "master" for uniformity with VentGroup function
+		- Removed redundant color methods
+		- Added basic general code comments
+		- Added section dividers
+
+ANNOUNCEMENTS:
+(none)
+
+REVISIONS:
+	2.0.0-a
+		- Fixed issue with emissionNum always evaluating as 0 for eternal emissions
+	2.0.1
+		New Library Methods -
+			- Added NewField library function
+			- Added FieldX library function
+		Issue and Bug Fixes -
+			- Fixed issue with "scale" parameter not working correctly
+		Parameters -
+			- Added scaleX
+			- Added scaleY

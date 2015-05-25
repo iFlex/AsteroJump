@@ -1,0 +1,16 @@
+#definition code
+def>ast3>"xdif",
+def>ast3>"ydif",
+def>ast3>"limit",
+set>ast3.limit>enemyDumb0.image.width,
+mul>ast3.limit>ast3.limit>"2";
+#execution code
+sub>ast3.xdif>ast3.image.x>enemyDumb0.image.x,
+sub>ast3.ydif>ast3.image.y>enemyDumb0.image.y,
+pwr>ast3.xdif>ast3.xdif>2,
+pwr>ast3.ydif>ast3.ydif>2,
+add>ast3.xdif>ast3.xdif>ast3.ydif,
+sqrt>ast3.xdif>ast3.xdif,
+isSmaller>ast3.xdif>ast3.xdif>ast3.limit,
+jumpTrue>ast3.xdif>"1",
+add>ast3.image.x>ast3.image.x>"5";

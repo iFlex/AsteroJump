@@ -1,0 +1,219 @@
+-------------------------------------------------------------------------------------------------------
+-----                                      Astero Jump Engine
+-------------------------------------------------------------------------------------------------------
+Function count                 95  -- is bound to decrease
+Completenes and efficiency:    70 % -- is bounde to increase
+
+Systems:
+--TODO restructure systems in order to simplify and generalise engine
+-- All Systems must have an initSystemName function that will be called in the SetupScene function
+-- GENERAL RE-USABLE Systems
+1. Camera -- 1/2 ready --TODO simplify after object system is ready
+	1.1 Camera Movement System  
+	1.2 Camera Rotation System  -- depends on the physics hang and reinstate system
+	1.3 Camera Zoom     System  -- depends on the physics hang and reinstate system
+		1.3.1 Zoom All Objects
+		1.3.2 Zoom Object 
+
+2.  Multi Touch Tracking System -- ready
+	2.1 Register Touch
+	2.2 Update Touch
+	2.3 Remove Touch
+	2.4 Get Distance --( for zoom function ) 
+	2.5 Get Angle    --( for rotation function )
+
+3. Object Management System -- ready --TODO test
+-- entry point: levelData[key]["owns"]
+	3.1 Object Creation
+	3.2 Object Updating -- if properties of object have changed, all the owned objects must change accordingly ( that's done in this function
+	3.3 Object Removal -- Relates to all the above systems and correctly disposes of the object's associated resources
+
+4. Owned Objects System -- done --( Decorative Images and Animations and any other kind of display object )
+	4.1 Add To Owned Objects -- done
+	4.2 Remove From Owned Objects -- pending
+	
+5. Owned Animations System -- 1/2 pending -- convert all animations to this system and verify
+-- TODO, feed all animations through the animation system
+-- add specs on the FSM
+	4.1 Animation Adding
+	4.2 Animation Switching
+	4.3 Animation FSM Sequencing ( Finite State Machine )
+	
+6. Joints System  -- done          --TODO verify 
+-- entry point: levelData[key]["joints"]
+-- joint representation method
+-- { joint0 = {type = pivot, joint = 03fdd, image = bitmap, child}}
+	5.1 Create Joints for object
+	5.2 Update Joints for all object
+	5.3 Delete Joints for object
+
+7. Physics Engine Hang and Reinstate System -- done -- update for further changes
+-- For Zoom and Rotation because of how corona works
+	7.1 Remove all physics bodies
+	7.2 Reinstate all physics bodies
+
+8. Level Loader System --done -- should make use of all the above systems
+
+
+-- old systems in place below but working fine
+-- Specific but Somewhat RE-Usable code
+9.  Touch Handling System
+	9.1 Touch Begin
+	9.2 Touch Move
+	9.3 Touch End
+	
+-- Very Specific Systems that are most probably not RE-Usable, depending on the game / app
+10.  Touch Action Switching
+11.  Status Bar System
+12.  Telekinesis Force Arrow System (Mike's) 
+
+13. Enemy Health System
+	17.1 Health Decrease
+	17.2 Health Increase -- not implemented yet, not sure it's needed
+
+14. Blast System
+15. Chemical Interaction System -- implosion or explosion so far
+16. Enemy Hook System
+17. Player Hook System
+18.	Action Enemy System
+19. Interaction System
+20. Game Pause Resume System
+21. Main Timeline -- Coordinates all the above systems
+22. Storyboard navigation system
+23. Game Create and Cleaning System
+24. InLevel Code Execution System -- not so old
+
+
+function initialiseArrow(event)
+function endArrow(event)
+function moveArrow(x,y)
+
+function rotateCamera(da)
+function moveCamera(ddx,ddy,auto_moved)
+
+function getTouchAngle()
+
+function GetNRT()
+function IsRoot(event)
+function RegisterTouch(event)
+function UpdateTouch(event)
+function UnRegisterTouch(event)
+function GetDist()
+
+function BeginTouch(e)
+function MoveTouch(e)
+function EndTouch(e)
+
+function SwitchTapMode(e)
+
+function createStatusBar(showFV)
+function ClearStatusBar()
+function setNrStars(nrs)
+function setNrFlames(nr)
+function setNrVacuums(nr)
+function setNrGold(nr)
+
+function SwitchAnimation(key,index)
+function NoAnimations(key)
+function SwitchAnimBack(e)
+
+function addToOwned(key,obj,strict,args)
+
+function AddPhToBody(obj)
+
+function TriggerPauseMenu()
+
+function DecreaseEnemyHealth(key,amount)
+
+function EnemyHook(parent)
+function EnemyUnHook(parent,unload)
+function UnhookAllEnemies()
+
+function TelekinesisHook(obj)
+function TelekinesisUnHook()
+function TelekinesisPush(object,angle,force)
+
+function backToMenu()
+
+function DestroyObject(obj)
+function UnloadObjects()
+
+function DeleteCapturerAndPrey()
+function ExitStageUponAnimation(e)
+function ClearAllAnimations()
+function EndGame()
+
+function UpdateJoint(left,id)
+
+function KeepPlayerCloseToAsteroid(ast)
+function ABSangle(angle)
+
+function AttachPlayer(object,removeCrnt)
+
+function removePhBodies( key )
+function mendPositions( key )
+function reinstatePhBodies( keyson )
+function zoomObject( coef,key,reinstate )
+function zoomCamera( coef )
+
+function DetachPlayer()
+function ClearAnimation(e)
+
+function GetAsteroidsInRange(x,y,range)
+function AddBlastAnimation(Magnitude,Dir,x,y)
+function CreateBlast(origX,origY,Range,Magnitude,Dir)
+
+function OnTap( event )
+function HandleAsteroTap(e)
+function HandleGeneralTouch(e)
+
+function ClearExitAnimation(e)
+
+function GravityCollision( self, event )
+
+function DeleteJoint(left,id)
+
+function GetImgRoot(img)
+function AttemptToLoadAnimations(key,root)
+function AddTrinket(key)
+function RecalcBoundaries(key)
+
+function LoadLevel(reload)
+
+function IsInsideAsteroid()
+
+function ChemicalReaction(obj1,obj2)
+
+function PlayerCollision(event)
+function GeneralInteraction(event)
+function ActionEnemy(enemyID)
+function RemoveItem(key)
+function ExecuteCode(key)
+
+function MaintainJoints(key)
+
+function PauseAllAnimations()
+function ReStartAllAnimations()
+
+function ClearForZoom()
+function RecoverAfterZoom()
+
+function frameEnter(event) -- core
+
+function UnFreezeGame()
+function FreezeGame()
+
+function ClearListeners()
+function onBackBtnPress()
+function onPlayBtnPress()
+function onRetryBtnPress()
+function CreatePauseMenu()
+function setupScene()
+function scene:createScene( event )
+function scene:enterScene( event )
+function scene:exitScene( event )
+function scene:destroyScene( event )
+function MakeVariable(scope,name)
+function AccessVariable(path)
+function Exec(args) -- refactor to accomodate acces to any variable
+

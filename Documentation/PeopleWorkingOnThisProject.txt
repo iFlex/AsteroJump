@@ -1,0 +1,23 @@
+Milorad Liviu Felix: Engine
+		     LevelDesigner
+		     Main Menu
+		     Chapter Browser
+		     Show Levels
+		     Score Saver
+		     Optimized::Decorator (set number of preloaded stars)
+
+Vlad Voinescu:       FileSystem Browser
+
+Gregor Robertson:    Score Reporter
+	             About page
+	             Chapter Browser Animation
+
+Mihai Popa Matei:    Telekinetik Arrow
+
+Nikolay Sabkov:      50% of Decorator code
+
+AnaIurov:            Graphics
+
+Craigh Grieve:       Graphics
+
+

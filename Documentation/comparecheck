@@ -1,0 +1,4 @@
+add>ast3.image.x>ast3.image.x>"2",
+isGreater>ast3.friction>ast3.image.x>"250",
+jumpFalse>ast3.friction>"1",
+set>ast3.image.x>"0";
